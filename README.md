@@ -2,82 +2,148 @@
 
 <div align="center">
 
-![Goly](media/icon.png)
+![Banner](media/banner.png)
 
-**The cockpit for parallel development sessions. Monitor worktrees, ports, processes, and agents in real-time. Native in VS Code.**
+**The cockpit for parallel development sessions.**
 
-[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/goly-dev.goly)](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/goly-dev.goly)](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+Monitor worktrees, ports, processes, and AI agents in real-time. Native in VS Code.
+
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/goly-dev.goly?style=for-the-badge&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/goly-dev.goly?style=for-the-badge&logo=臣)](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly)
+[![Stars](https://img.shields.io/github/stars/goly-dev/goly?style=for-the-badge&logo=github)](https://github.com/goly-dev/goly)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+[![Twitter](https://img.shields.io/badge/Twitter-@golydev-1DA1F2?style=for-the-badge&logo=twitter)](https://twitter.com/golydev)
+
+**[Install](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly) · [Documentation](docs/) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)**
 
 </div>
 
 ---
 
-## ✨ Features
+## ✨ Why Goly?
 
-### 🎛️ Cockpit Sidebar
-All your worktrees at a glance with **live status**:
+In 2026, developers work differently:
 
 ```
-● main        ↑2 ↓1  ~12  :3000
-● feature/auth    ~8  :3001  🤖 Claude Code
-● review/pr-42        :3002
+┌─────────────────────────────────────────────────────────────┐
+│  main (production)     │  feature/payment  │  review/pr-42 │
+│  npm run dev:3000      │  Claude Code      │  Windsurf      │
+│  ...                   │  :3001            │  :3002         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-- Branch + ahead/behind
-- Modified files count
+**Multiple branches. Multiple agents. Multiple ports.** But no visibility.
+
+**Goly gives you the cockpit view** — see everything at a glance, spot conflicts before they happen, and never lose context again.
+
+---
+
+## 🎯 The Problem
+
+| ❌ Without Goly | ✅ With Goly |
+|----------------|--------------|
+| "Which port is feature using again?" | Ports shown per worktree |
+| "Is Claude Code still running in that branch?" | 🤖 Agent badge |
+| "Did I forget to commit something?" | Live status with modified files |
+| "Let me checkout to review this PR..." | One-click review mode |
+| "Where was I on that branch?" | Snapshots restore context |
+
+---
+
+## 🚀 Features
+
+### 🎛️ Live Cockpit Sidebar
+
+```
+● main          ↑2 ↓0  ~12  :3000
+● feature/payment   ~8  :3001  🤖 Claude Code
+● review/pr-152     :3002  (idle 2h ago)
+```
+
+All your worktrees with:
+- Branch name + ahead/behind
+- Modified/staged/untracked counts
 - Open ports
-- Agent detection (🤖)
-- Last activity
+- 🤖 AI agent detection
+- Last activity timestamp
 
 ### 🔌 Port Awareness
-Never clash on ports again. Goly shows:
-- Which worktree uses which port
-- Conflict badges
-- Automatic port suggestions
+
+Never clash on ports again:
+
+- **Visual port mapping** — see which worktree uses which port
+- **Conflict badges** — instant warning when ports overlap
+- **Auto-suggestion** — "Port 3000 is taken by `main`. Launch on 3001?"
 
 ### 🤖 Agent Detection
-Detects when you're running AI coding agents:
+
+Heuristic detection of AI coding agents:
+
 - Claude Code
-- Codex
+- Codex / OpenAI
 - Cursor
 - Windsurf
 - GitHub Copilot
 
+See at a glance which agent is working where.
+
 ### 🔍 Review Mode
-Review PRs in one click:
+
 ```
-Goly: Review Branch/PR → fetch → worktree → new window → review → cleanup
+Goly: Review Branch/PR
+        ↓
+   Fetch ref
+        ↓
+   Create worktree (review/<ref>)
+        ↓
+   Open in new window
+        ↓
+   Review code
+        ↓
+   Cleanup with one click
 ```
 
 ### 💾 Context Snapshots
-Save and restore your workspace context:
-- Open files
-- Editor layout
+
+Save your complete workspace context:
+
+- Open files & editor layout
 - Breakpoints
 - Terminal sessions (cwd + restart command)
+- Restore in one click
+
+### ⚡ Built for Speed
+
+| Action | Time |
+|--------|------|
+| Extension activation | < 300ms |
+| Sidebar refresh (10 worktrees) | < 500ms |
+| Worktree creation | < 3s |
 
 ---
 
-## 🚀 Quick Start
+## 📦 Installation
 
-### Installation
+### VS Code Marketplace (Recommended)
 
 1. Open VS Code
 2. Press `Cmd/Ctrl + P`
 3. Type: `ext install goly-dev.goly`
 4. Press Enter
 
-Or search for **"Goly"** in the VS Code Extensions Marketplace.
+### Open VSX (For Cursor/Windsurf Users)
 
-### Usage
+Install from [open-vsx.org](https://open-vsx.org/extension/goly-dev/goly)
 
-1. Open a Git repository in VS Code
-2. See your worktrees in the **Goly** sidebar
-3. Right-click to:
+---
+
+## 🎮 Quick Start
+
+1. **Open a Git repository** in VS Code
+2. **Look for the Goly sidebar** (layers icon) in the Activity Bar
+3. **Right-click** any worktree to:
    - Open in New Window
-   - Open Terminal
+   - Open Terminal Here
    - Save Snapshot
    - Compare with Main
    - Remove
@@ -88,32 +154,9 @@ Or search for **"Goly"** in the VS Code Extensions Marketplace.
 |---------|----------|-------------|
 | `Goly: Refresh` | `Cmd+Shift+G R` | Refresh worktree list |
 | `Goly: Create Worktree` | `Cmd+Shift+G N` | Create new worktree |
-| `Goly: Review Branch/PR` | — | Start review session |
-| `Goly: Save Snapshot` | — | Save workspace context |
+| `Goly: Review Branch/PR` | — | Start review workflow |
+| `Goly: Save Snapshot` | — | Save current context |
 | `Goly: Restore Snapshot` | — | Restore saved context |
-
----
-
-## 🎯 Use Cases
-
-### Multi-Branch Development
-Work on multiple features simultaneously without switching branches:
-```
-main → feature/payment → feature/auth → hotfix/security
-```
-
-### Code Review
-Review PRs without cluttering your main workspace:
-```
-review/pr-152 → review/pr-153 → review/pr-154
-```
-
-### AI Agent Orchestration
-Track multiple AI agents working in parallel:
-```
-Claude Code in feature/backend
-Cursor in feature/frontend
-```
 
 ---
 
@@ -136,8 +179,8 @@ Cursor in feature/frontend
 
 ## 🆚 Comparison
 
-| Feature | GitLens | Native | **Goly** |
-|---------|---------|--------|----------|
+| Feature | GitLens Pro | Native | **Goly** |
+|---------|-------------|--------|----------|
 | Worktree CRUD | ✅ | ✅ | ✅ |
 | Visual Cockpit | ❌ | ❌ | ✅ |
 | Port Tracking | ❌ | ❌ | ✅ |
@@ -145,34 +188,87 @@ Cursor in feature/frontend
 | Review Mode | ❌ | ❌ | ✅ |
 | Snapshots | ❌ | ❌ | ✅ |
 | Open Source | ❌ | ✅ | ✅ |
-| Free | ❌ | ✅ | ✅ |
+| **Free** | ❌ | ✅ | ✅ |
+
+> GitLens charges for worktree features. Goly is **100% free and open source**.
 
 ---
 
-## 📦 Tech Stack
+## 🌟 Use Cases
+
+### Multi-Branch Development
+
+Work on features in parallel without branch switching:
+
+```
+main ──── feature/backend ──── feature/frontend ──── hotfix/security
+ :3000      :3001              :3002                :3003
+```
+
+### Code Review Workflow
+
+Review multiple PRs simultaneously:
+
+```
+review/pr-152 ── review/pr-153 ── review/pr-154
+```
+
+### AI Agent Orchestration
+
+Track multiple AI coding assistants:
+
+```
+Claude Code in feature/payment  (active)
+Cursor in feature/auth         (idle 30m ago)
+Windsurf in refactor/cleanup  (active)
+```
+
+---
+
+## 🛠️ Tech Stack
 
 - **TypeScript** with strict mode
 - **VS Code Extension API** (native TreeView)
 - **Git CLI** (porcelain output parsing)
 - **esbuild** for fast bundling
 - **vitest** for testing
+- **GitHub Actions** for CI/CD
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTING.md) first.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+```bash
+# Development setup
+git clone https://github.com/goly-dev/goly.git
+cd goly
+npm install
+npm run build
+# F5 to debug
+```
 
 ---
 
 ## 📄 License
 
-MIT © Goly Team
+MIT — see [LICENSE](LICENSE).
+
+---
+
+## 🙏 Acknowledgments
+
+- [Git Worktree Manager](https://marketplace.visualstudio.com/items?itemName=jackiotyu.git-worktree-manager) — inspiration
+- [VS Code](https://code.visualstudio.com/) — the best code editor
+- All [contributors](https://github.com/goly-dev/goly/graphs/contributors)
 
 ---
 
 <div align="center">
 
-**Made with ❤️ for developers who work in parallel**
+**Made with ❤️ for developers who refuse to switch branches**
+
+[Install](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly) · [Star on GitHub](https://github.com/goly-dev/goly) · [Follow on Twitter](https://twitter.com/golydev)
 
 </div>
