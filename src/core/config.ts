@@ -11,10 +11,9 @@ export interface GolyConfig {
   autoOpenInNewWindow: boolean;
   confirmBeforeDelete: boolean;
   confirmBeforeDeleteBranch: boolean;
-  portRangeStart: number;
   envFilePatterns: string[];
   postCreateCommands: string[];
-  maxWorktreesFree: number;
+  maxWorktrees: number;
 }
 
 const CONFIG_KEY = 'goly';
@@ -26,34 +25,86 @@ const DEFAULTS: GolyConfig = {
   autoOpenInNewWindow: true,
   confirmBeforeDelete: true,
   confirmBeforeDeleteBranch: true,
-  portRangeStart: 3000,
-  envFilePatterns: ['.env.local', '.env.*.local', '*.env'],
+  envFilePatterns: ['.env', '.env.local', '.env.*', '*.env'],
   postCreateCommands: ['npm install'],
-  maxWorktreesFree: 5,
+  maxWorktrees: 0,
 };
 
 export function getConfig(): GolyConfig {
   const config = vscode.workspace.getConfiguration(CONFIG_KEY);
+  const envFilePatterns = config.get<unknown>(
+    'envFilePatterns',
+    DEFAULTS.envFilePatterns,
+  );
+  const postCreateCommands = config.get<unknown>(
+    'postCreateCommands',
+    DEFAULTS.postCreateCommands,
+  );
+
   return {
-    baseDirectory: config.get('baseDirectory', DEFAULTS.baseDirectory),
+    baseDirectory: nonEmptyString(
+      config.get('baseDirectory', DEFAULTS.baseDirectory),
+      DEFAULTS.baseDirectory,
+    ),
     autoRefresh: config.get('autoRefresh', DEFAULTS.autoRefresh),
-    refreshInterval: config.get('refreshInterval', DEFAULTS.refreshInterval),
-    autoOpenInNewWindow: config.get('autoOpenInNewWindow', DEFAULTS.autoOpenInNewWindow),
-    confirmBeforeDelete: config.get('confirmBeforeDelete', DEFAULTS.confirmBeforeDelete),
-    confirmBeforeDeleteBranch: config.get('confirmBeforeDeleteBranch', DEFAULTS.confirmBeforeDeleteBranch),
-    portRangeStart: config.get('portRangeStart', DEFAULTS.portRangeStart),
-    envFilePatterns: config.get('envFilePatterns', DEFAULTS.envFilePatterns),
-    postCreateCommands: config.get('postCreateCommands', DEFAULTS.postCreateCommands),
-    maxWorktreesFree: config.get('maxWorktreesFree', DEFAULTS.maxWorktreesFree),
+    refreshInterval: nonNegativeNumber(
+      config.get('refreshInterval', DEFAULTS.refreshInterval),
+      DEFAULTS.refreshInterval,
+    ),
+    autoOpenInNewWindow: config.get(
+      'autoOpenInNewWindow',
+      DEFAULTS.autoOpenInNewWindow,
+    ),
+    confirmBeforeDelete: config.get(
+      'confirmBeforeDelete',
+      DEFAULTS.confirmBeforeDelete,
+    ),
+    confirmBeforeDeleteBranch: config.get(
+      'confirmBeforeDeleteBranch',
+      DEFAULTS.confirmBeforeDeleteBranch,
+    ),
+    envFilePatterns: stringArray(envFilePatterns, DEFAULTS.envFilePatterns),
+    postCreateCommands: stringArray(
+      postCreateCommands,
+      DEFAULTS.postCreateCommands,
+    ),
+    maxWorktrees: nonNegativeNumber(
+      config.get(
+        'maxWorktrees',
+        config.get('maxWorktreesFree', DEFAULTS.maxWorktrees),
+      ),
+      DEFAULTS.maxWorktrees,
+    ),
   };
 }
 
 export function onConfigChange(
-  callback: (config: GolyConfig) => void
+  callback: (config: GolyConfig) => void,
 ): vscode.Disposable {
-  return vscode.workspace.onDidChangeConfiguration(event => {
+  return vscode.workspace.onDidChangeConfiguration((event) => {
     if (event.affectsConfiguration(CONFIG_KEY)) {
       callback(getConfig());
     }
   });
+}
+
+function nonEmptyString(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+}
+
+function nonNegativeNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : fallback;
+}
+
+function stringArray(value: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(value)) {
+    return [...fallback];
+  }
+  const strings = value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return strings;
 }

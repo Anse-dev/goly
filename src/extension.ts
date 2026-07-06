@@ -1,374 +1,609 @@
 /**
- * Goly Extension - Main Entry Point
- * 
- * Orchestrates all services and registers commands/views.
+ * Goly extension entry point.
  */
 
+import * as path from 'path';
 import * as vscode from 'vscode';
+import { getConfig } from './core/config.js';
+import { logger } from './core/logger.js';
+import { expandTilde, toError } from './core/types.js';
 import { GitClient } from './git/client.js';
-import { WorktreeService, WorktreeInfo } from './worktrees/service.js';
 import { ReviewService } from './review/service.js';
 import { SnapshotService } from './snapshots/service.js';
 import { GolyTreeProvider } from './ui/sidebar/provider.js';
-import { logger } from './core/logger.js';
-import { getConfig } from './core/config.js';
-import { expandTilde, getBasename } from './core/types.js';
+import { WorktreeService } from './worktrees/service.js';
+import type { WorktreeInfo } from './worktrees/service.js';
 
-let worktreeService: WorktreeService;
-let reviewService: ReviewService;
-let snapshotService: SnapshotService;
-let treeProvider: GolyTreeProvider;
-let statusBarItem: vscode.StatusBarItem;
+let worktreeService: WorktreeService | undefined;
+let reviewService: ReviewService | undefined;
+let snapshotService: SnapshotService | undefined;
+let treeProvider: GolyTreeProvider | undefined;
+let statusBarItem: vscode.StatusBarItem | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  logger.info('Goly activating...');
+const COMMANDS = [
+  'goly.refresh',
+  'goly.create',
+  'goly.remove',
+  'goly.open',
+  'goly.terminal',
+  'goly.snapshot',
+  'goly.restoreSnapshot',
+  'goly.review',
+  'goly.endReview',
+  'goly.copyEnv',
+  'goly.compare',
+] as const;
+
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
   const startTime = Date.now();
+  logger.info('Goly activating');
+  context.subscriptions.push({ dispose: () => logger.dispose() });
 
-  try {
-    // Get workspace folder
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-      logger.warn('No workspace folder open');
-      return;
-    }
-
-    const repoPath = workspaceFolder.uri.fsPath;
-
-    // Initialize Git client and check repository
-    const git = new GitClient(repoPath);
-    const isRepo = await git.isRepository();
-    if (!isRepo) {
-      logger.warn('Not a git repository');
-      return;
-    }
-
-    // Initialize services
-    worktreeService = new WorktreeService(repoPath);
-    await worktreeService.init();
-
-    reviewService = new ReviewService(git, worktreeService);
-    snapshotService = new SnapshotService(context.globalState);
-
-    // Register tree view
-    treeProvider = new GolyTreeProvider(worktreeService);
-    vscode.window.registerTreeDataProvider('goly.sidebar', treeProvider);
-
-    // Register commands
-    registerCommands(context);
-
-    // Create status bar
-    createStatusBar(context);
-
-    // Setup welcome view for empty state
-    setupWelcomeView();
-
-    const elapsed = Date.now() - startTime;
-    logger.info(`Goly activated in ${elapsed}ms`);
-    
-    // Show activation message
-    vscode.window.showInformationMessage(`Goly activated (${elapsed}ms)`);
-  } catch (e) {
-    logger.error('Goly activation failed', e);
-    throw e;
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    registerUnavailableCommands(
+      context,
+      'Open a folder containing a Git repository first.',
+    );
+    logger.warn('No workspace folder is open');
+    return;
   }
+
+  const repositoryPath = workspaceFolder.uri.fsPath;
+  const git = new GitClient(repositoryPath);
+  if (!(await git.isRepository())) {
+    registerUnavailableCommands(
+      context,
+      'The current folder is not a Git repository.',
+    );
+    logger.warn('The workspace is not a Git repository');
+    return;
+  }
+
+  worktreeService = new WorktreeService(repositoryPath);
+  const initialResult = await worktreeService.init();
+  if (!initialResult.ok) {
+    worktreeService.dispose();
+    worktreeService = undefined;
+    registerUnavailableCommands(context, initialResult.error.message);
+    logger.error('Could not initialize worktrees', initialResult.error);
+    return;
+  }
+
+  reviewService = new ReviewService(git, worktreeService, context.globalState);
+  snapshotService = new SnapshotService(context.globalState);
+  treeProvider = new GolyTreeProvider(worktreeService);
+
+  context.subscriptions.push(
+    worktreeService,
+    treeProvider,
+    vscode.window.registerTreeDataProvider('goly.sidebar', treeProvider),
+  );
+
+  registerCommands(context, git);
+  createStatusBar(context);
+  setupViewContext(context);
+
+  logger.info(`Goly activated in ${Date.now() - startTime}ms`);
 }
 
 export function deactivate(): void {
-  logger.info('Goly deactivating...');
-  worktreeService?.dispose();
-  statusBarItem?.dispose();
+  logger.info('Goly deactivated');
 }
 
-function registerCommands(context: vscode.ExtensionContext): void {
-  // Refresh
+function registerCommands(
+  context: vscode.ExtensionContext,
+  git: GitClient,
+): void {
+  const service = requireWorktreeService();
+  const reviews = requireReviewService();
+  const snapshots = requireSnapshotService();
+  const provider = requireTreeProvider();
+
   context.subscriptions.push(
     vscode.commands.registerCommand('goly.refresh', async () => {
-      treeProvider.refresh();
-    })
-  );
+      try {
+        await provider.refresh();
+      } catch (error) {
+        await vscode.window.showErrorMessage(
+          `Refresh failed: ${toError(error).message}`,
+        );
+      }
+    }),
 
-  // Create worktree
-  context.subscriptions.push(
     vscode.commands.registerCommand('goly.create', async () => {
-      await createWorktree();
-    })
-  );
+      await createWorktree(git, service);
+    }),
 
-  // Remove worktree
-  context.subscriptions.push(
-    vscode.commands.registerCommand('goly.remove', async (wt?: WorktreeInfo) => {
-      if (!wt) {
-        const selected = await vscode.window.showQuickPick(
-          worktreeService.getAll().map(w => ({
-            label: w.name,
-            description: w.branch,
-            worktree: w,
-          })),
-          { placeHolder: 'Select worktree to remove' }
-        );
-        if (!selected) return;
-        wt = selected.worktree;
-      }
-
-      const config = getConfig();
-      if (config.confirmBeforeDelete) {
-        const choice = await vscode.window.showWarningMessage(
-          `Delete worktree "${wt.name}"?`,
-          { modal: true },
-          'Delete Worktree Only',
-          config.confirmBeforeDeleteBranch ? 'Delete Worktree + Branch' : undefined,
-          'Cancel'
-        );
-        
-        if (!choice || choice === 'Cancel') return;
-        if (choice === 'Delete Worktree + Branch') {
-          await worktreeService.remove(wt.path, true);
-        } else {
-          await worktreeService.remove(wt.path, false);
+    vscode.commands.registerCommand(
+      'goly.remove',
+      async (worktree?: WorktreeInfo) => {
+        const selected =
+          worktree ??
+          (await pickWorktree(
+            service,
+            'Select a worktree to remove',
+            (candidate) => !candidate.isMain,
+          ));
+        if (!selected) {
+          return;
         }
-      }
-    })
-  );
 
-  // Open in new window
-  context.subscriptions.push(
-    vscode.commands.registerCommand('goly.open', async (wt?: WorktreeInfo) => {
-      if (!wt) return;
-      await vscode.commands.executeCommand(
-        'vscode.openFolder',
-        vscode.Uri.file(wt.path),
-        { newWindow: true }
-      );
-    })
-  );
+        const config = getConfig();
+        let deleteBranch = false;
+        if (config.confirmBeforeDelete) {
+          const choices = ['Delete Worktree Only'];
+          if (config.confirmBeforeDeleteBranch) {
+            choices.push('Delete Worktree + Branch');
+          }
+          const choice = await vscode.window.showWarningMessage(
+            `Delete worktree "${selected.name}"?`,
+            { modal: true },
+            ...choices,
+          );
+          if (!choice) {
+            return;
+          }
+          deleteBranch = choice === 'Delete Worktree + Branch';
+        }
 
-  // Open terminal
-  context.subscriptions.push(
-    vscode.commands.registerCommand('goly.terminal', async (wt?: WorktreeInfo) => {
-      if (!wt) {
-        const selected = await vscode.window.showQuickPick(
-          worktreeService.getAll().map(w => ({
-            label: w.name,
-            worktree: w,
-          }))
+        const result = await service.remove(selected.path, deleteBranch);
+        if (!result.ok) {
+          await vscode.window.showErrorMessage(
+            `Removal failed: ${result.error.message}`,
+          );
+          return;
+        }
+        await vscode.window.showInformationMessage(
+          `Worktree "${selected.name}" removed`,
         );
-        if (!selected) return;
-        wt = selected.worktree;
-      }
+      },
+    ),
 
-      const terminal = vscode.window.createTerminal({
-        name: `Goly: ${wt.name}`,
-        cwd: wt.path,
-      });
-      terminal.show();
-    })
-  );
+    vscode.commands.registerCommand(
+      'goly.open',
+      async (worktree?: WorktreeInfo) => {
+        const selected =
+          worktree ??
+          (await pickWorktree(service, 'Select a worktree to open'));
+        if (!selected) {
+          return;
+        }
+        await vscode.commands.executeCommand(
+          'vscode.openFolder',
+          vscode.Uri.file(selected.path),
+          { forceNewWindow: true },
+        );
+      },
+    ),
 
-  // Review mode
-  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'goly.terminal',
+      async (worktree?: WorktreeInfo) => {
+        const selected =
+          worktree ??
+          (await pickWorktree(service, 'Select a worktree for the terminal'));
+        if (!selected) {
+          return;
+        }
+        vscode.window
+          .createTerminal({
+            name: `Goly: ${selected.name}`,
+            cwd: selected.path,
+          })
+          .show();
+      },
+    ),
+
     vscode.commands.registerCommand('goly.review', async () => {
       const ref = await vscode.window.showInputBox({
-        prompt: 'Enter branch or PR reference to review',
-        placeHolder: 'e.g., origin/feature-xyz or refs/pull/123/head',
+        prompt: 'Enter a branch or pull-request ref to review',
+        placeHolder: 'origin/feature-name or refs/pull/123/head',
+        validateInput: (value) =>
+          value.trim() ? undefined : 'A ref is required',
       });
-
-      if (!ref) return;
-
-      const result = await reviewService.startReview(ref);
-      if (!result.ok) {
-        vscode.window.showErrorMessage(`Failed to start review: ${result.error.message}`);
-      }
-    })
-  );
-
-  // Save snapshot
-  context.subscriptions.push(
-    vscode.commands.registerCommand('goly.snapshot', async (wt?: WorktreeInfo) => {
-      if (!wt) {
-        const selected = await vscode.window.showQuickPick(
-          worktreeService.getAll().map(w => ({
-            label: w.name,
-            description: w.branch,
-            worktree: w,
-          }))
-        );
-        if (!selected) return;
-        wt = selected.worktree;
-      }
-
-      const name = await vscode.window.showInputBox({
-        prompt: 'Enter snapshot name',
-        placeHolder: 'e.g., my-feature-context',
-      });
-
-      if (!name) return;
-
-      await snapshotService.save(name, wt.path, wt.branch);
-      vscode.window.showInformationMessage(`Snapshot "${name}" saved`);
-    })
-  );
-
-  // Restore snapshot
-  context.subscriptions.push(
-    vscode.commands.registerCommand('goly.restoreSnapshot', async () => {
-      const snapshots = snapshotService.list();
-      
-      if (snapshots.length === 0) {
-        vscode.window.showInformationMessage('No snapshots available');
+      if (!ref) {
         return;
       }
 
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Preparing review for ${ref}`,
+        },
+        async () => {
+          const result = await reviews.startReview(ref);
+          if (!result.ok) {
+            await vscode.window.showErrorMessage(
+              `Review failed: ${result.error.message}`,
+            );
+            return;
+          }
+          await vscode.window.showInformationMessage(
+            `Review worktree created for ${result.value.ref}`,
+          );
+        },
+      );
+    }),
+
+    vscode.commands.registerCommand('goly.endReview', async () => {
+      const sessions = reviews.listSessions();
+      if (sessions.length === 0) {
+        await vscode.window.showInformationMessage('No active review sessions');
+        return;
+      }
       const selected = await vscode.window.showQuickPick(
-        snapshots.map(s => ({
-          label: s.name,
-          description: `${s.branch} - ${new Date(s.createdAt).toLocaleDateString()}`,
-          snapshot: s,
+        sessions.map((session) => ({
+          label: session.ref,
+          description: session.branch,
+          detail: session.worktreePath,
+          session,
         })),
-        { placeHolder: 'Select snapshot to restore' }
+        { placeHolder: 'Select a review session to remove' },
       );
-
-      if (!selected) return;
-
-      await snapshotService.restore(selected.snapshot.id);
-      vscode.window.showInformationMessage(`Snapshot "${selected.snapshot.name}" restored`);
-    })
-  );
-
-  // Copy env files
-  context.subscriptions.push(
-    vscode.commands.registerCommand('goly.copyEnv', async (wt?: WorktreeInfo) => {
-      if (!wt) return;
-      vscode.window.showInformationMessage(
-        `Environment files would be copied to ${wt.path} (configurable patterns)`
-      );
-    })
-  );
-
-  // Compare with main
-  context.subscriptions.push(
-    vscode.commands.registerCommand('goly.compare', async (wt?: WorktreeInfo) => {
-      if (!wt) return;
-      const main = worktreeService.getAll().find(w => w.isMain);
-      if (!main) {
-        vscode.window.showInformationMessage('No main worktree found');
+      if (!selected) {
         return;
       }
-      
-      // Use VS Code's built-in diff command
-      await vscode.commands.executeCommand(
-        'vscode.diff',
-        vscode.Uri.file(main.path),
-        vscode.Uri.file(wt.path),
-        `${main.branch} ↔ ${wt.branch}`
+      const result = await reviews.endReview(selected.session.id);
+      if (!result.ok) {
+        await vscode.window.showErrorMessage(
+          `Cleanup failed: ${result.error.message}`,
+        );
+        return;
+      }
+      await vscode.window.showInformationMessage(
+        `Review "${selected.session.ref}" removed`,
       );
-    })
+    }),
+
+    vscode.commands.registerCommand(
+      'goly.snapshot',
+      async (worktree?: WorktreeInfo) => {
+        const selected =
+          worktree ??
+          (await pickWorktree(service, 'Select the worktree to snapshot'));
+        if (!selected) {
+          return;
+        }
+        const name = await vscode.window.showInputBox({
+          prompt: 'Enter a snapshot name',
+          validateInput: (value) =>
+            value.trim() ? undefined : 'A name is required',
+        });
+        if (!name) {
+          return;
+        }
+
+        try {
+          await snapshots.save(name, selected.path, selected.branch);
+          await vscode.window.showInformationMessage(
+            `Snapshot "${name.trim()}" saved`,
+          );
+        } catch (error) {
+          await vscode.window.showErrorMessage(
+            `Snapshot failed: ${toError(error).message}`,
+          );
+        }
+      },
+    ),
+
+    vscode.commands.registerCommand('goly.restoreSnapshot', async () => {
+      const available = snapshots.list();
+      if (available.length === 0) {
+        await vscode.window.showInformationMessage('No snapshots available');
+        return;
+      }
+      const selected = await vscode.window.showQuickPick(
+        available.map((snapshot) => ({
+          label: snapshot.name,
+          description: snapshot.branch,
+          detail: new Date(snapshot.createdAt).toLocaleString(),
+          snapshot,
+        })),
+        { placeHolder: 'Select a snapshot to restore' },
+      );
+      if (!selected) {
+        return;
+      }
+      try {
+        await snapshots.restore(selected.snapshot.id);
+        await vscode.window.showInformationMessage(
+          `Snapshot "${selected.snapshot.name}" restored`,
+        );
+      } catch (error) {
+        await vscode.window.showErrorMessage(
+          `Restore failed: ${toError(error).message}`,
+        );
+      }
+    }),
+
+    vscode.commands.registerCommand(
+      'goly.copyEnv',
+      async (worktree?: WorktreeInfo) => {
+        const selected =
+          worktree ??
+          (await pickWorktree(
+            service,
+            'Select the destination worktree',
+            (candidate) => !candidate.isMain,
+          ));
+        if (!selected) {
+          return;
+        }
+        const result = await service.copyEnvironmentFiles(selected.path);
+        if (!result.ok) {
+          await vscode.window.showErrorMessage(result.error.message);
+          return;
+        }
+        await vscode.window.showInformationMessage(
+          `${result.value} environment file(s) copied to ${selected.name}`,
+        );
+      },
+    ),
+
+    vscode.commands.registerCommand(
+      'goly.compare',
+      async (worktree?: WorktreeInfo) => {
+        const selected =
+          worktree ??
+          (await pickWorktree(
+            service,
+            'Select a worktree to compare',
+            (candidate) => !candidate.isMain,
+          ));
+        if (!selected) {
+          return;
+        }
+        const main = service.getAll().find((candidate) => candidate.isMain);
+        if (!main) {
+          await vscode.window.showErrorMessage(
+            'The main worktree could not be found',
+          );
+          return;
+        }
+
+        const result = await new GitClient(selected.path).diff(
+          main.branch,
+          selected.branch,
+        );
+        if (!result.ok) {
+          await vscode.window.showErrorMessage(
+            `Comparison failed: ${result.error.message}`,
+          );
+          return;
+        }
+        const document = await vscode.workspace.openTextDocument({
+          language: 'diff',
+          content:
+            result.value ||
+            `No differences between ${main.branch} and ${selected.branch}\n`,
+        });
+        await vscode.window.showTextDocument(document, { preview: false });
+      },
+    ),
   );
 }
 
-async function createWorktree(): Promise<void> {
-  const config = getConfig();
+async function createWorktree(
+  git: GitClient,
+  service: WorktreeService,
+): Promise<void> {
+  const branchSource = await vscode.window.showQuickPick(
+    [
+      { label: '$(git-branch) Existing branch', value: 'existing' as const },
+      { label: '$(add) New branch', value: 'new' as const },
+    ],
+    { placeHolder: 'Select a branch source' },
+  );
+  if (!branchSource) {
+    return;
+  }
 
-  // Step 1: Choose branch source
-  const branchSource = await vscode.window.showQuickPick([
-    { label: '$(git-branch) Existing branch', value: 'existing' },
-    { label: '$(add) New branch', value: 'new' },
-  ], { placeHolder: 'Select branch source' });
-
-  if (!branchSource) return;
-
-  // Step 2: Get branch name
   let branchName: string;
-
   if (branchSource.value === 'existing') {
-    const git = new GitClient(vscode.workspace.workspaceFolders![0].uri.fsPath);
     const branchesResult = await git.listBranches();
-    
     if (!branchesResult.ok) {
-      vscode.window.showErrorMessage('Failed to list branches');
+      await vscode.window.showErrorMessage(
+        `Could not list branches: ${branchesResult.error.message}`,
+      );
       return;
     }
 
-    const selected = await vscode.window.showQuickPick(
-      branchesResult.value
-        .filter(b => !b.isRemote)
-        .map(b => ({ label: b.name, picked: b.isCurrent })),
-      { placeHolder: 'Select branch' }
+    const usedBranches = new Set(
+      service.getAll().map((worktree) => worktree.branch),
     );
-
-    if (!selected) return;
+    const choices = branchesResult.value
+      .filter((branch) => !branch.isRemote && !usedBranches.has(branch.name))
+      .map((branch) => ({
+        label: branch.name,
+        description: branch.upstream,
+      }));
+    if (choices.length === 0) {
+      await vscode.window.showInformationMessage(
+        'Every local branch already has a worktree',
+      );
+      return;
+    }
+    const selected = await vscode.window.showQuickPick(choices, {
+      placeHolder: 'Select a branch',
+    });
+    if (!selected) {
+      return;
+    }
     branchName = selected.label;
   } else {
-    branchName = await vscode.window.showInputBox({
-      prompt: 'Enter new branch name',
-      validateInput: (value) => {
-        if (!value || /^[a-zA-Z0-9_/-]+$/.test(value)) return null;
-        return 'Invalid branch name';
+    const enteredBranch = await vscode.window.showInputBox({
+      prompt: 'Enter the new branch name',
+      validateInput: async (value) => {
+        return (await git.validateBranchName(value))
+          ? undefined
+          : 'Enter a valid Git branch name';
       },
-    }) ?? '';
-
-    if (!branchName) return;
+    });
+    if (!enteredBranch) {
+      return;
+    }
+    branchName = enteredBranch;
   }
 
-  // Step 3: Get path
-  const baseDir = expandTilde(config.baseDirectory);
-  const worktreePath = await vscode.window.showInputBox({
-    prompt: 'Enter worktree directory',
-    value: `${baseDir}/${branchName.replace(/\//g, '-')}`,
-    validateInput: (value) => {
-      if (value) return null;
-      return 'Path cannot be empty';
-    },
+  const baseDirectory = expandTilde(getConfig().baseDirectory);
+  const requestedPath = await vscode.window.showInputBox({
+    prompt: 'Enter the worktree directory',
+    value: path.join(baseDirectory, branchName.replace(/\//g, '-')),
+    validateInput: (value) => (value.trim() ? undefined : 'A path is required'),
   });
-
-  if (!worktreePath) return;
-
-  // Step 4: Options
-  const createBranch = branchSource.value === 'new';
-
-  // Create
-  const result = await worktreeService.create(branchName, worktreePath, createBranch);
-  
-  if (!result.ok) {
-    vscode.window.showErrorMessage(`Failed to create worktree: ${result.error.message}`);
-  } else {
-    vscode.window.showInformationMessage(
-      `Worktree created: ${result.value.worktree.name}`
-    );
+  if (!requestedPath) {
+    return;
   }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Creating ${branchName}`,
+    },
+    async () => {
+      const result = await service.create(branchName, requestedPath, {
+        createBranch: branchSource.value === 'new',
+      });
+      if (!result.ok) {
+        await vscode.window.showErrorMessage(
+          `Creation failed: ${result.error.message}`,
+        );
+        return;
+      }
+      const warningSuffix =
+        result.value.warnings.length > 0
+          ? ` (${result.value.warnings.join('; ')})`
+          : '';
+      await vscode.window.showInformationMessage(
+        `Worktree "${result.value.worktree.name}" created${warningSuffix}`,
+      );
+    },
+  );
 }
 
 function createStatusBar(context: vscode.ExtensionContext): void {
+  const service = requireWorktreeService();
   statusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
-    100
+    100,
   );
-  statusBarItem.text = '$(layers) Goly';
   statusBarItem.command = 'goly.refresh';
-  statusBarItem.tooltip = 'Click to refresh worktrees';
-  statusBarItem.show();
-
   context.subscriptions.push(statusBarItem);
 
-  // Update on worktree changes
-  worktreeService.on('worktree:created', updateStatusBar);
-  worktreeService.on('worktree:removed', updateStatusBar);
+  const update = (): void => updateStatusBar(service);
+  context.subscriptions.push(
+    service.on('worktree:created', update),
+    service.on('worktree:removed', update),
+    service.on('worktree:updated', update),
+  );
+  update();
+  statusBarItem.show();
 }
 
-function updateStatusBar(): void {
-  const worktrees = worktreeService.getAll();
-  const count = worktrees.length;
-  const conflicts = worktrees.some(w => w.ports.length > 1);
+function updateStatusBar(service: WorktreeService): void {
+  if (!statusBarItem) {
+    return;
+  }
+  const worktrees = service.getAll();
+  const owners = new Map<number, string>();
+  const conflicts = new Set<number>();
+  for (const worktree of worktrees) {
+    for (const port of worktree.ports) {
+      const owner = owners.get(port);
+      if (owner && owner !== worktree.path) {
+        conflicts.add(port);
+      } else {
+        owners.set(port, worktree.path);
+      }
+    }
+  }
 
-  statusBarItem.text = conflicts
-    ? `$(warning) Goly: ${count} (port conflict)`
-    : `$(layers) Goly: ${count}`;
-  statusBarItem.tooltip = `${count} worktree(s)`;
+  statusBarItem.text =
+    conflicts.size > 0
+      ? `$(warning) Goly: ${worktrees.length} (${[...conflicts].join(', ')})`
+      : `$(layers) Goly: ${worktrees.length}`;
+  statusBarItem.tooltip =
+    conflicts.size > 0
+      ? `Port conflict: ${[...conflicts].join(', ')}`
+      : `${worktrees.length} worktree(s)`;
 }
 
-function setupWelcomeView(): void {
-  vscode.commands.executeCommand('setContext', 'goly.hasWorktrees', false);
-  
-  worktreeService.on('worktree:created', () => {
-    vscode.commands.executeCommand('setContext', 'goly.hasWorktrees', true);
-  });
+function setupViewContext(context: vscode.ExtensionContext): void {
+  const service = requireWorktreeService();
+  const update = (): void => {
+    void vscode.commands.executeCommand(
+      'setContext',
+      'goly.hasWorktrees',
+      service.getAll().length > 0,
+    );
+  };
+  context.subscriptions.push(
+    service.on('worktree:created', update),
+    service.on('worktree:removed', update),
+  );
+  update();
+}
+
+async function pickWorktree(
+  service: WorktreeService,
+  placeHolder: string,
+  predicate: (worktree: WorktreeInfo) => boolean = () => true,
+): Promise<WorktreeInfo | undefined> {
+  const selected = await vscode.window.showQuickPick(
+    service
+      .getAll()
+      .filter(predicate)
+      .map((worktree) => ({
+        label: worktree.name,
+        description: worktree.branch,
+        detail: worktree.path,
+        worktree,
+      })),
+    { placeHolder },
+  );
+  return selected?.worktree;
+}
+
+function registerUnavailableCommands(
+  context: vscode.ExtensionContext,
+  message: string,
+): void {
+  for (const command of COMMANDS) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(command, async () => {
+        await vscode.window.showErrorMessage(message);
+      }),
+    );
+  }
+}
+
+function requireWorktreeService(): WorktreeService {
+  if (!worktreeService) {
+    throw new Error('Worktree service is not initialized');
+  }
+  return worktreeService;
+}
+
+function requireReviewService(): ReviewService {
+  if (!reviewService) {
+    throw new Error('Review service is not initialized');
+  }
+  return reviewService;
+}
+
+function requireSnapshotService(): SnapshotService {
+  if (!snapshotService) {
+    throw new Error('Snapshot service is not initialized');
+  }
+  return snapshotService;
+}
+
+function requireTreeProvider(): GolyTreeProvider {
+  if (!treeProvider) {
+    throw new Error('Tree provider is not initialized');
+  }
+  return treeProvider;
 }

@@ -1,17 +1,14 @@
 /**
- * Port and Process Inspector - Cross-platform implementation
- * 
- * Detects listening ports and running processes by worktree directory.
- * Uses platform-specific commands (lsof on mac/linux, netstat on windows) .
+ * Cross-platform port and process inspection.
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { logger } from '../core/logger.js';
-import { retry } from '../core/types.js';
+import { execFile } from 'child_process';
 import { platform } from 'os';
+import * as path from 'path';
+import { logger } from '../core/logger.js';
+import { isPathInside, toError } from '../core/types.js';
 
-const execAsync = promisify(exec);
+const COMMAND_TIMEOUT_MS = 5_000;
 
 export interface PortInfo {
   port: number;
@@ -29,275 +26,456 @@ export interface ProcessInfo {
   port?: number;
 }
 
-// Agent detection patterns
+export interface PathActivity {
+  ports: number[];
+  processes: ProcessInfo[];
+  hasAgent: boolean;
+  agentName?: string;
+}
+
+interface CwdProcess {
+  pid: number;
+  name: string;
+  cwd?: string;
+  command: string;
+}
+
 const AGENT_PATTERNS = [
-  { name: 'Claude Code', patterns: ['claude', 'anthropic'] },
-  { name: 'Codex', patterns: ['codex', 'openai'] },
-  { name: 'Cursor', patterns: ['cursor'] },
-  { name: 'Windsurf', patterns: ['windsurf', 'codeium'] },
-  { name: 'Copilot', patterns: ['copilot', 'github'] },
+  { name: 'Claude Code', patterns: [/\bclaude\b/i] },
+  { name: 'Codex', patterns: [/\bcodex\b/i] },
+  { name: 'Cursor', patterns: [/\bcursor\b/i] },
+  { name: 'Windsurf', patterns: [/\bwindsurf\b/i, /\bcodeium\b/i] },
+  { name: 'Copilot', patterns: [/\bcopilot\b/i] },
 ];
 
 export class ProcessInspector {
-  private platform: string;
+  private readonly currentPlatform = platform();
 
-  constructor() {
-    this.platform = platform();
-  }
-
-  /**
-   * Get all listening ports
-   */
   async getListeningPorts(): Promise<PortInfo[]> {
     try {
-      if (this.platform === 'win32') {
-        return await this.getListeningPortsWindows();
-      } else {
-        return await this.getListeningPortsUnix();
-      }
-    } catch (e) {
-      logger.error('Failed to get listening ports', e);
+      return this.currentPlatform === 'win32'
+        ? await this.getListeningPortsWindows()
+        : await this.getListeningPortsUnix();
+    } catch (error) {
+      logger.debug('Could not inspect listening ports', error);
       return [];
     }
   }
 
-  /**
-   * Get processes for a specific worktree directory
-   */
-  async getProcessesForPath(worktreePath: string): Promise<ProcessInfo[]> {
+  async inspectPaths(
+    worktreePaths: readonly string[],
+  ): Promise<Map<string, PathActivity>> {
+    const normalizedPaths = worktreePaths.map((worktreePath) =>
+      path.resolve(worktreePath),
+    );
+    const result = new Map<string, PathActivity>(
+      normalizedPaths.map((worktreePath) => [
+        worktreePath,
+        { ports: [], processes: [], hasAgent: false },
+      ]),
+    );
+
     try {
-      if (this.platform === 'win32') {
-        return await this.getProcessesForPathWindows(worktreePath);
-      } else {
-        return await this.getProcessesForPathUnix(worktreePath);
-      }
-    } catch (e) {
-      logger.error('Failed to get processes for path', e);
-      return [];
-    }
-  }
+      const [ports, rawProcesses] = await Promise.all([
+        this.getListeningPorts(),
+        this.currentPlatform === 'win32'
+          ? this.getProcessesWindows()
+          : this.getProcessesUnix(normalizedPaths),
+      ]);
+      const portsByPid = groupPortsByPid(ports);
 
-  /**
-   * Detect if an agent is running in the worktree
-   */
-  async detectAgent(worktreePath: string): Promise<{ hasAgent: boolean; agentName?: string }> {
-    const processes = await this.getProcessesForPath(worktreePath);
-    
-    for (const proc of processes) {
-      const lowerName = proc.name.toLowerCase();
-      for (const agent of AGENT_PATTERNS) {
-        if (agent.patterns.some(p => lowerName.includes(p))) {
-          return { hasAgent: true, agentName: agent.name };
+      for (const process of rawProcesses) {
+        const ownerPath = findOwningWorktree(
+          normalizedPaths,
+          process,
+          this.currentPlatform,
+        );
+        if (!ownerPath) {
+          continue;
+        }
+        const activity = result.get(ownerPath);
+        if (!activity) {
+          continue;
+        }
+
+        const processPorts = portsByPid.get(process.pid) ?? [];
+        const primaryPort = processPorts[0]?.port;
+        activity.processes.push({
+          pid: process.pid,
+          name: process.name,
+          command: process.command,
+          cwd: process.cwd,
+          port: primaryPort,
+        });
+        for (const portInfo of processPorts) {
+          if (!activity.ports.includes(portInfo.port)) {
+            activity.ports.push(portInfo.port);
+          }
         }
       }
-    }
-    
-    return { hasAgent: false };
-  }
 
-  /**
-   * Get ports used by a worktree
-   */
-  async getPortsForPath(worktreePath: string): Promise<number[]> {
-    const ports = new Set<number>();
-    const processes = await this.getProcessesForPath(worktreePath);
-    
-    for (const proc of processes) {
-      if (proc.port) {
-        ports.add(proc.port);
+      for (const activity of result.values()) {
+        activity.ports.sort((left, right) => left - right);
+        activity.processes.sort((left, right) => left.pid - right.pid);
+        const agent = identifyAgent(activity.processes);
+        activity.hasAgent = agent !== undefined;
+        activity.agentName = agent;
       }
+    } catch (error) {
+      logger.error('Could not inspect worktree activity', error);
     }
-    
-    return Array.from(ports);
+
+    return result;
   }
 
-  /**
-   * Check if a port is available
-   */
+  async getProcessesForPath(worktreePath: string): Promise<ProcessInfo[]> {
+    const normalizedPath = path.resolve(worktreePath);
+    const activity = await this.inspectPaths([normalizedPath]);
+    return activity.get(normalizedPath)?.processes ?? [];
+  }
+
+  async detectAgent(
+    worktreePath: string,
+  ): Promise<{ hasAgent: boolean; agentName?: string }> {
+    const normalizedPath = path.resolve(worktreePath);
+    const activity = await this.inspectPaths([normalizedPath]);
+    const pathActivity = activity.get(normalizedPath);
+    return {
+      hasAgent: pathActivity?.hasAgent ?? false,
+      agentName: pathActivity?.agentName,
+    };
+  }
+
+  async getPortsForPath(worktreePath: string): Promise<number[]> {
+    const normalizedPath = path.resolve(worktreePath);
+    const activity = await this.inspectPaths([normalizedPath]);
+    return activity.get(normalizedPath)?.ports ?? [];
+  }
+
   async isPortAvailable(port: number): Promise<boolean> {
+    if (!isValidPort(port)) {
+      return false;
+    }
     const ports = await this.getListeningPorts();
-    return !ports.some(p => p.port === port);
+    return !ports.some((candidate) => candidate.port === port);
   }
 
-  /**
-   * Find next available port in range
-   */
   async findAvailablePort(start: number, end: number): Promise<number | null> {
-    const ports = await this.getListeningPorts();
-    const usedPorts = new Set(ports.map(p => p.port));
-    
-    for (let port = start; port <= end; port++) {
+    if (!isValidPort(start) || !isValidPort(end) || start > end) {
+      return null;
+    }
+
+    const usedPorts = new Set(
+      (await this.getListeningPorts()).map((port) => port.port),
+    );
+    for (let port = start; port <= end; port += 1) {
       if (!usedPorts.has(port)) {
         return port;
       }
     }
-    
     return null;
   }
 
-  // Unix/macOS implementation
   private async getListeningPortsUnix(): Promise<PortInfo[]> {
-    const { stdout } = await execAsync(
-      'lsof -i -P -n -sTCP:LISTEN 2>/dev/null | tail -n +2',
-      { encoding: 'utf-8' }
-    );
+    try {
+      const output = await executeFile('lsof', [
+        '-nP',
+        '-iTCP',
+        '-sTCP:LISTEN',
+        '-Fpcn',
+      ]);
+      return parseLsofPorts(output);
+    } catch (error) {
+      if (this.currentPlatform === 'linux') {
+        return this.getListeningPortsLinuxFallback();
+      }
+      throw error;
+    }
+  }
 
+  private async getListeningPortsLinuxFallback(): Promise<PortInfo[]> {
+    const output = await executeFile('ss', ['-ltnpH']);
     const ports: PortInfo[] = [];
-    const lines = stdout.split('\n');
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      
-      const parts = line.split(/\s+/);
-      if (parts.length < 9) continue;
-
-      const [name, pid, user, fd, type, proto, state, addr] = parts;
-      const addrParts = addr.split(':');
-      const port = parseInt(addrParts[addrParts.length - 1] || '', 10);
-      
-      if (!isNaN(port)) {
-        ports.push({
-          port,
-          pid: parseInt(pid, 10),
-          processName: name,
-          command: line,
-          address: addr,
-        });
+    for (const line of output.split(/\r?\n/)) {
+      const addressMatch = /\s(\[[^\]]+\]|[^\s]+):(\d+)\s/.exec(` ${line} `);
+      const pidMatch = /pid=(\d+)/.exec(line);
+      if (!addressMatch) {
+        continue;
       }
+      const port = Number.parseInt(addressMatch[2] ?? '', 10);
+      const pid = Number.parseInt(pidMatch?.[1] ?? '0', 10);
+      if (!isValidPort(port)) {
+        continue;
+      }
+      ports.push({
+        port,
+        pid,
+        processName: /users:\(\("([^"]+)"/.exec(line)?.[1] ?? 'unknown',
+        command: line.trim(),
+        address: addressMatch[1] ?? '',
+      });
     }
-
-    return ports;
+    return deduplicatePorts(ports);
   }
 
-  private async getProcessesForPathUnix(worktreePath: string): Promise<ProcessInfo[]> {
+  private async getProcessesUnix(
+    worktreePaths: readonly string[],
+  ): Promise<CwdProcess[]> {
+    let output: string;
     try {
-      const { stdout } = await execAsync(
-        `lsof -a -d cwd -c '' 2>/dev/null | grep '${worktreePath}' || true`,
-        { encoding: 'utf-8' }
-      );
-
-      const processes: ProcessInfo[] = [];
-      const pids = new Set<number>();
-
-      for (const line of stdout.split('\n')) {
-        if (!line.trim()) continue;
-        const parts = line.split(/\s+/);
-        if (parts.length >= 2) {
-          pids.add(parseInt(parts[1], 10));
-        }
-      }
-
-      for (const pid of pids) {
-        try {
-          const { stdout: psOut } = await execAsync(
-            `ps -p ${pid} -o comm= -o args= 2>/dev/null`,
-            { encoding: 'utf-8' }
-          );
-          const [name, ...cmdParts] = (psOut.trim() || '').split(/\s+/);
-          if (name) {
-            processes.push({
-              pid,
-              name,
-              command: cmdParts.join(' ') || name,
-            });
-          }
-        } catch {
-          // Process may have ended
-        }
-      }
-
-      // Also check for processes with the path in command line
-      try {
-        const { stdout: grepOut } = await execAsync(
-          `pgrep -f '${worktreePath}' 2>/dev/null || true`,
-          { encoding: 'utf-8' }
-        );
-
-        for (const pidLine of grepOut.split('\n')) {
-          const pid = parseInt(pidLine.trim(), 10);
-          if (!isNaN(pid) && !pids.has(pid)) {
-            try {
-              const { stdout: psOut } = await execAsync(
-                `ps -p ${pid} -o comm= -o args= 2>/dev/null`,
-                { encoding: 'utf-8' }
-              );
-              const [name, ...cmdParts] = (psOut.trim() || '').split(/\s+/);
-              if (name) {
-                processes.push({
-                  pid,
-                  name,
-                  command: cmdParts.join(' ') || name,
-                });
-              }
-            } catch {
-              // Ignore
-            }
-          }
-        }
-      } catch {
-        // Ignore
-      }
-
-      return processes;
-    } catch (e) {
-      logger.debug('Failed to get processes for path', e);
-      return [];
-    }
-  }
-
-  // Windows implementation
-  private async getListeningPortsWindows(): Promise<PortInfo[]> {
-    try {
-      const { stdout } = await execAsync(
-        'netstat -ano | findstr LISTENING',
-        { encoding: 'utf-8' }
-      );
-
-      const ports: PortInfo[] = [];
-      const lines = stdout.split('\n');
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 5) continue;
-
-        const localAddr = parts[1];
-        const addrParts = localAddr.split(':');
-        const port = parseInt(addrParts[addrParts.length - 1] || '', 10);
-        const pid = parseInt(parts[4] || '', 10);
-
-        if (!isNaN(port) && !isNaN(pid)) {
-          let processName = 'unknown';
-          try {
-            const { stdout: nameOut } = await execAsync(
-              `tasklist /FI "PID eq ${pid}" /FO CSV /NH`,
-              { encoding: 'utf-8' }
-            );
-            processName = nameOut.split(',')[0]?.replace(/"/g, '') || 'unknown';
-          } catch {
-            // Ignore
-          }
-
-          ports.push({
-            port,
-            pid,
-            processName,
-            command: line,
-            address: localAddr,
-          });
-        }
-      }
-
-      return ports;
+      output = await executeFile('lsof', ['-a', '-d', 'cwd', '-Fpcn']);
     } catch {
       return [];
     }
+
+    const cwdProcesses = parseLsofCwdProcesses(output).filter(
+      (process) =>
+        process.cwd &&
+        worktreePaths.some((worktreePath) =>
+          isPathInside(worktreePath, process.cwd ?? ''),
+        ),
+    );
+    return Promise.all(
+      cwdProcesses.map(async (process) => {
+        try {
+          const command = (
+            await executeFile('ps', [
+              '-p',
+              String(process.pid),
+              '-o',
+              'command=',
+            ])
+          ).trim();
+          return { ...process, command: command || process.name };
+        } catch {
+          return process;
+        }
+      }),
+    );
   }
 
-  private async getProcessesForPathWindows(_worktreePath: string): Promise<ProcessInfo[]> {
-    // Windows process detection is more complex
-    // For now, return empty - would need PowerShell or WMI
-    return [];
+  private async getListeningPortsWindows(): Promise<PortInfo[]> {
+    const output = await executeFile('netstat', ['-ano', '-p', 'tcp']);
+    const ports: PortInfo[] = [];
+
+    for (const line of output.split(/\r?\n/)) {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length < 5 || fields[0]?.toUpperCase() !== 'TCP') {
+        continue;
+      }
+      if (fields[3]?.toUpperCase() !== 'LISTENING') {
+        continue;
+      }
+      const localAddress = fields[1] ?? '';
+      const portMatch = /:(\d+)$/.exec(localAddress);
+      const port = Number.parseInt(portMatch?.[1] ?? '', 10);
+      const pid = Number.parseInt(fields[4] ?? '', 10);
+      if (!isValidPort(port) || !Number.isInteger(pid)) {
+        continue;
+      }
+      ports.push({
+        port,
+        pid,
+        processName: 'unknown',
+        command: line.trim(),
+        address: localAddress,
+      });
+    }
+    return deduplicatePorts(ports);
   }
+
+  private async getProcessesWindows(): Promise<CwdProcess[]> {
+    const script = [
+      'Get-CimInstance Win32_Process',
+      'Select-Object ProcessId,Name,CommandLine',
+      'ConvertTo-Json -Compress',
+    ].join(' | ');
+    const output = await executeFile('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      script,
+    ]);
+    if (!output.trim()) {
+      return [];
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(output);
+    } catch (error) {
+      logger.debug('Could not parse Windows process list', toError(error));
+      return [];
+    }
+
+    const entries = Array.isArray(parsed) ? parsed : [parsed];
+    return entries.flatMap((entry) => {
+      if (!isWindowsProcess(entry)) {
+        return [];
+      }
+      return [
+        {
+          pid: entry.ProcessId,
+          name: entry.Name,
+          command: entry.CommandLine ?? entry.Name,
+        },
+      ];
+    });
+  }
+}
+
+export function parseLsofPorts(output: string): PortInfo[] {
+  const ports: PortInfo[] = [];
+  let pid = 0;
+  let processName = 'unknown';
+
+  for (const field of output.split(/\r?\n/)) {
+    const type = field[0];
+    const value = field.slice(1);
+    if (type === 'p') {
+      pid = Number.parseInt(value, 10);
+    } else if (type === 'c') {
+      processName = value || 'unknown';
+    } else if (type === 'n') {
+      const match = /:(\d+)(?:\s+\(LISTEN\))?$/.exec(value);
+      const port = Number.parseInt(match?.[1] ?? '', 10);
+      if (Number.isInteger(pid) && isValidPort(port)) {
+        ports.push({
+          port,
+          pid,
+          processName,
+          command: processName,
+          address: value,
+        });
+      }
+    }
+  }
+  return deduplicatePorts(ports);
+}
+
+export function parseLsofCwdProcesses(output: string): CwdProcess[] {
+  const processes: CwdProcess[] = [];
+  let current: CwdProcess | undefined;
+
+  const flush = (): void => {
+    if (current?.pid && current.cwd) {
+      processes.push(current);
+    }
+  };
+
+  for (const field of output.split(/\r?\n/)) {
+    const type = field[0];
+    const value = field.slice(1);
+    if (type === 'p') {
+      flush();
+      current = {
+        pid: Number.parseInt(value, 10),
+        name: 'unknown',
+        command: 'unknown',
+      };
+    } else if (type === 'c' && current) {
+      current.name = value || 'unknown';
+      current.command = current.name;
+    } else if (type === 'n' && current) {
+      current.cwd = value;
+    }
+  }
+  flush();
+  return processes;
+}
+
+function executeFile(file: string, args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      [...args],
+      {
+        encoding: 'utf8',
+        maxBuffer: 20 * 1024 * 1024,
+        timeout: COMMAND_TIMEOUT_MS,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const stderrText = String(stderr).trim();
+          if (stderrText && !error.message.includes(stderrText)) {
+            error.message = `${error.message}: ${stderrText}`;
+          }
+          reject(error);
+          return;
+        }
+        resolve(String(stdout));
+      },
+    );
+  });
+}
+
+function groupPortsByPid(ports: readonly PortInfo[]): Map<number, PortInfo[]> {
+  const grouped = new Map<number, PortInfo[]>();
+  for (const port of ports) {
+    const entries = grouped.get(port.pid) ?? [];
+    entries.push(port);
+    grouped.set(port.pid, entries);
+  }
+  return grouped;
+}
+
+function findOwningWorktree(
+  worktreePaths: readonly string[],
+  process: CwdProcess,
+  currentPlatform: NodeJS.Platform,
+): string | undefined {
+  const sorted = [...worktreePaths].sort(
+    (left, right) => right.length - left.length,
+  );
+  if (process.cwd) {
+    const cwd = process.cwd;
+    return sorted.find((worktreePath) => isPathInside(worktreePath, cwd));
+  }
+  if (currentPlatform === 'win32') {
+    const command = process.command.toLowerCase();
+    return sorted.find((worktreePath) =>
+      command.includes(worktreePath.toLowerCase()),
+    );
+  }
+  return undefined;
+}
+
+function identifyAgent(processes: readonly ProcessInfo[]): string | undefined {
+  for (const process of processes) {
+    const searchable = `${process.name} ${process.command}`;
+    for (const agent of AGENT_PATTERNS) {
+      if (agent.patterns.some((pattern) => pattern.test(searchable))) {
+        return agent.name;
+      }
+    }
+  }
+  return undefined;
+}
+
+function deduplicatePorts(ports: readonly PortInfo[]): PortInfo[] {
+  const unique = new Map<string, PortInfo>();
+  for (const port of ports) {
+    unique.set(`${port.pid}:${port.port}`, port);
+  }
+  return [...unique.values()];
+}
+
+function isValidPort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65_535;
+}
+
+interface WindowsProcessRecord {
+  ProcessId: number;
+  Name: string;
+  CommandLine?: string | null;
+}
+
+function isWindowsProcess(value: unknown): value is WindowsProcessRecord {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const record = value as Partial<WindowsProcessRecord>;
+  return Number.isInteger(record.ProcessId) && typeof record.Name === 'string';
 }

@@ -2,10 +2,12 @@
  * Core types and utilities for Goly
  */
 
+import { homedir } from 'os';
+import * as path from 'path';
+
 // Result type for error handling
-export type Result<T, E = Error> = 
-  | { ok: true; value: T }
-  | { ok: false; error: E };
+export type Result<T, E = Error> =
+  { ok: true; value: T } | { ok: false; error: E };
 
 export function ok<T>(value: T): Result<T, never> {
   return { ok: true, value };
@@ -21,107 +23,98 @@ export type Disposable = {
 };
 
 // Event emitter for internal events
-export class EventBus<T extends Record<string, unknown[]>> {
-  private listeners = new Map<keyof T, Set<(data: T[K]) => void>>();
+export class EventBus<T extends object> implements Disposable {
+  private listeners = new Map<keyof T, Set<(data: unknown) => void>>();
+
+  constructor(
+    private readonly onListenerError?: (event: keyof T, error: unknown) => void,
+  ) {}
 
   on<K extends keyof T>(event: K, handler: (data: T[K]) => void): Disposable {
-    if (!this.listeners.has(event)) {
-      this.listeners.set(event, new Set());
-    }
-    this.listeners.get(event)!.add(handler as (data: unknown) => void);
+    const listeners =
+      this.listeners.get(event) ?? new Set<(data: unknown) => void>();
+    const listener = (data: unknown): void => handler(data as T[K]);
+    listeners.add(listener);
+    this.listeners.set(event, listeners);
+
     return {
-      dispose: () => this.listeners.get(event)?.delete(handler as (data: unknown) => void),
+      dispose: () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+          this.listeners.delete(event);
+        }
+      },
     };
   }
 
   emit<K extends keyof T>(event: K, data: T[K]): void {
-    this.listeners.get(event)?.forEach(handler => {
+    this.listeners.get(event)?.forEach((handler) => {
       try {
         handler(data);
       } catch (e) {
-        console.error(`Event handler error for ${String(event)}:`, e);
+        this.onListenerError?.(event, e);
       }
     });
+  }
+
+  dispose(): void {
+    this.listeners.clear();
   }
 }
 
 // Debounce utility
-export function debounce<T extends (...args: unknown[]) => void>(
-  fn: T,
-  ms: number
-): T & { cancel(): void } {
+export function debounce<Args extends unknown[]>(
+  fn: (...args: Args) => void,
+  ms: number,
+): ((...args: Args) => void) & { cancel(): void } {
   let timeout: NodeJS.Timeout | null = null;
-  const debounced = ((...args: unknown[]) => {
-    if (timeout) clearTimeout(timeout);
-    timeout = setTimeout(() => fn(...args), ms);
-  }) as T & { cancel(): void };
-  debounced.cancel = () => {
-    if (timeout) clearTimeout(timeout);
+  const debounced = (...args: Args): void => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(() => {
+      timeout = null;
+      fn(...args);
+    }, ms);
   };
+
+  debounced.cancel = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+  };
+
   return debounced;
 }
 
-// Throttle utility
-export function throttle<T extends (...args: unknown[]) => void>(
-  fn: T,
-  ms: number
-): T {
-  let lastCall = 0;
-  return ((...args: unknown[]) => {
-    const now = Date.now();
-    if (now - lastCall >= ms) {
-      lastCall = now;
-      fn(...args);
-    }
-  }) as T;
-}
-
-// Timeout wrapper
-export async function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  fallback: T
-): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
-  ]);
-}
-
-// Retry with exponential backoff
-export async function retry<T>(
-  fn: () => Promise<T>,
-  maxRetries = 3,
-  baseDelay = 100
-): Promise<T> {
-  let lastError: unknown;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      lastError = e;
-      if (i < maxRetries - 1) {
-        await new Promise(r => setTimeout(r, baseDelay * Math.pow(2, i)));
-      }
-    }
-  }
-  throw lastError;
-}
-
 // Path utilities
-export function expandTilde(path: string): string {
-  if (path.startsWith('~/') || path === '~') {
-    return path.replace('~', process.env.HOME || '');
+export function expandTilde(inputPath: string): string {
+  if (inputPath === '~') {
+    return homedir();
   }
-  return path;
+  if (inputPath.startsWith('~/') || inputPath.startsWith('~\\')) {
+    return path.join(homedir(), inputPath.slice(2));
+  }
+  return inputPath;
 }
 
-export function getBasename(path: string): string {
-  return path.split('/').pop() || path;
+export function isPathInside(
+  parentPath: string,
+  candidatePath: string,
+): boolean {
+  const relative = path.relative(
+    path.resolve(parentPath),
+    path.resolve(candidatePath),
+  );
+  return (
+    relative === '' ||
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== '..' &&
+      !path.isAbsolute(relative))
+  );
 }
 
-export function getDirname(path: string): string {
-  const parts = path.split('/');
-  parts.pop();
-  return parts.join('/') || '/';
+export function toError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
 }

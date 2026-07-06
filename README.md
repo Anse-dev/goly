@@ -1,87 +1,90 @@
-# Goly
+![Goly — Git worktree mission control](media/banner.png)
 
-**Parallel Workspaces & Worktree Cockpit**
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=goly-dev.goly"><img src="https://img.shields.io/visual-studio-marketplace/v/goly-dev.goly?style=flat-square&label=Marketplace&color=C6FF3D&labelColor=11151A" alt="Marketplace version"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=goly-dev.goly"><img src="https://img.shields.io/visual-studio-marketplace/i/goly-dev.goly?style=flat-square&label=Installs&color=54D6FF&labelColor=11151A" alt="Installs"></a>
+  <a href="https://github.com/Anse-dev/goly"><img src="https://img.shields.io/github/stars/Anse-dev/goly?style=flat-square&label=Stars&color=FFB454&labelColor=11151A" alt="GitHub stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-E8EDF2?style=flat-square&labelColor=11151A" alt="MIT license"></a>
+</p>
 
-The cockpit for parallel development sessions. Monitor worktrees, ports, processes, and AI agents in real-time. Native in VS Code.
+<p align="center"><strong>Stop switching branches. Run them side by side.</strong></p>
 
-[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/goly-dev.goly)](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly)
-[![Installs](https://img.shields.io/visual-studio-marketplace/i/goly-dev.goly)](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly)
-[![Stars](https://img.shields.io/github/stars/goly-dev/goly)](https://github.com/goly-dev/goly)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+Goly turns Git worktrees into a focused mission-control view inside VS Code. Create parallel workspaces, see what is running in each one, isolate reviews, and return to the right coding context without branch-switching gymnastics.
 
-**[Install](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)**
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=goly-dev.goly"><strong>Install from the VS Code Marketplace →</strong></a>
+</p>
 
----
+## Your repository is parallel. Your tools should be too.
 
-## Why Goly?
+Modern development rarely happens on one branch at a time. A feature is in progress, a production fix arrives, a PR needs review, and an AI coding agent is still working in another directory.
 
-Work on multiple branches simultaneously without losing context.
+Goly keeps those lanes visible:
 
-### See everything at a glance
-
+```text
+● main                 ↑2  ~3   :3000
+● feature/payments         ~8   :3001  ◈ Codex
+● review/pr-152                  :4173  ◈ Claude Code
 ```
-main          ↑2  ~12  :3000
-feature/payment  ~8  :3001  🤖 Claude Code
-review/pr-152      :3002  (idle 2h ago)
+
+No hidden terminals. No mystery ports. No “which folder was that agent using?” moment.
+
+## One cockpit, six jobs
+
+| Capability | What Goly gives you |
+| --- | --- |
+| **Worktree control** | Create, open, inspect, and safely remove Git worktrees from the Activity Bar. |
+| **Live branch status** | See ahead/behind counts plus staged, modified, and untracked files at a glance. |
+| **Port awareness** | Discover listening ports by worktree and surface collisions before they waste your time. |
+| **Agent presence** | Detect Claude Code, Codex, Cursor, Windsurf, and Copilot processes in each workspace. |
+| **Review lanes** | Fetch a branch or PR ref into an isolated review worktree, then clean it up in one command. |
+| **Context snapshots** | Restore open files, editor columns, terminal locations, and scoped breakpoints. |
+
+## A faster parallel workflow
+
+```text
+Create worktree
+      ↓
+Copy local environment files
+      ↓
+Run your configured setup command
+      ↓
+Open a clean VS Code window
+      ↓
+Monitor branch + ports + agents from Goly
 ```
 
-- Branch + ahead/behind status
-- Modified files count
-- Open ports
-- AI agent detection
-- Last activity
+For reviews:
 
-### Never clash on ports again
+```text
+Fetch ref → isolated review branch → new window → review → cleanup
+```
 
-Goly shows which worktree uses which port and warns you about conflicts.
+## Get started in 30 seconds
 
-### Track AI agents
+1. Install **Goly** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly).
+2. Open a Git repository.
+3. Select the **Goly** icon in the Activity Bar.
+4. Click **+** to create a worktree, or right-click an existing one for actions.
 
-Detects Claude Code, Codex, Cursor, Windsurf, Copilot running in your worktrees.
+You can also open the Command Palette and run `Goly: Create Worktree`.
 
-### Review PRs in one click
+## Commands
 
-Fetch → worktree → new window → review → cleanup
-
-### Restore context instantly
-
-Save snapshots of open files, breakpoints, and terminal state.
-
----
-
-## Install
-
-1. Open VS Code
-2. Press Cmd/Ctrl + P
-3. Type: `ext install goly-dev.goly`
-4. Press Enter
-
----
-
-## Quick Start
-
-1. Open a Git repository in VS Code
-2. Find the **Goly** sidebar (layers icon) in the Activity Bar
-3. Right-click any worktree to:
-   - Open in New Window
-   - Open Terminal Here
-   - Save Snapshot
-   - Compare with Main
-   - Remove
-
-### Commands
-
-| Command | Shortcut | Description |
-|---------|----------|-------------|
-| Goly: Refresh | Cmd+Shift+G R | Refresh worktree list |
-| Goly: Create Worktree | Cmd+Shift+G N | Create new worktree |
-| Goly: Review Branch/PR | - | Start review workflow |
-| Goly: Save Snapshot | - | Save current context |
-| Goly: Restore Snapshot | - | Restore saved context |
-
----
+| Command | Shortcut | Purpose |
+| --- | --- | --- |
+| `Goly: Refresh` | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> <kbd>R</kbd> | Refresh worktrees and activity |
+| `Goly: Create Worktree` | <kbd>Cmd/Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> <kbd>N</kbd> | Create a workspace from a new or existing branch |
+| `Goly: Review Branch/PR` | — | Start an isolated review session |
+| `Goly: End Review Session` | — | Remove the review worktree and temporary branch |
+| `Goly: Save Snapshot` | — | Capture the current coding context |
+| `Goly: Restore Snapshot` | — | Reopen a saved context |
+| `Goly: Copy Environment Files` | — | Copy configured local environment files |
+| `Goly: Compare with Main` | — | Open a branch diff against the main worktree |
 
 ## Configuration
+
+Goly ships with useful defaults and stays out of the way when you do not need automation.
 
 ```json
 {
@@ -90,69 +93,43 @@ Save snapshots of open files, breakpoints, and terminal state.
   "goly.refreshInterval": 5000,
   "goly.autoOpenInNewWindow": true,
   "goly.confirmBeforeDelete": true,
-  "goly.portRangeStart": 3000,
-  "goly.envFilePatterns": [".env.local"],
-  "goly.postCreateCommands": ["npm install"]
+  "goly.confirmBeforeDeleteBranch": true,
+  "goly.envFilePatterns": [".env", ".env.local", ".env.*"],
+  "goly.postCreateCommands": ["npm install"],
+  "goly.maxWorktrees": 0
 }
 ```
 
----
+Set `goly.postCreateCommands` to an empty array to disable setup commands. Set `goly.maxWorktrees` to `0` for unlimited worktrees.
 
-## Comparison
+## Built for local-first development
 
-| Feature | GitLens Pro | Native | Goly |
-|---------|-------------|--------|------|
-| Worktree CRUD | yes | yes | yes |
-| Visual Cockpit | no | no | **yes** |
-| Port Tracking | no | no | **yes** |
-| Agent Detection | no | no | **yes** |
-| Review Mode | no | no | **yes** |
-| Snapshots | no | no | **yes** |
-| Free | no | yes | **yes** |
+- **No Goly account**
+- **No cloud service**
+- **No telemetry**
+- **No source-code upload**
 
----
+Git operations and process inspection happen on your machine. Configured post-create commands only run in trusted VS Code workspaces.
 
-## Use Cases
+## Requirements
 
-### Multi-Branch Development
+- VS Code 1.100 or newer
+- Git available on your `PATH`
+- macOS, Linux, or Windows
 
-Work on features in parallel without branch switching.
+Port and process visibility depends on the permissions provided by your operating system.
 
-### Code Review
+## Open source
 
-Review multiple PRs simultaneously without leaving your main workspace.
+Goly is MIT licensed. Issues and contributions are welcome:
 
-### AI Agent Orchestration
-
-Track multiple AI coding assistants working in different branches.
-
----
-
-## Tech Stack
-
-- TypeScript with strict mode
-- VS Code Extension API (native TreeView)
-- Git CLI (porcelain output parsing)
-- esbuild for fast bundling
-- vitest for testing
-- GitHub Actions for CI/CD
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+- [Report a bug](https://github.com/Anse-dev/goly/issues)
+- [Read the changelog](CHANGELOG.md)
+- [Contribute](CONTRIBUTING.md)
 
 ```bash
-git clone https://github.com/goly-dev/goly.git
+git clone https://github.com/Anse-dev/goly.git
 cd goly
-npm install
-npm run build
-# F5 to debug
+npm ci
+npm run check
 ```
-
----
-
-## License
-
-MIT - see [LICENSE](LICENSE)

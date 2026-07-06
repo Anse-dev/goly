@@ -1,76 +1,121 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-labelledby="title description">
+  <title id="title">Goly — Git worktree mission control</title>
+  <desc id="description">A dark technical dashboard showing parallel Git worktrees, ports, and coding agents.</desc>
+
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1a1a2e"/>
-      <stop offset="100%" style="stop-color:#16213e"/>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070A0D"/>
+      <stop offset="0.58" stop-color="#0C1116"/>
+      <stop offset="1" stop-color="#111921"/>
     </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#6366F1"/>
-      <stop offset="100%" style="stop-color:#8B5CF6"/>
+    <linearGradient id="signal" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#C6FF3D"/>
+      <stop offset="1" stop-color="#54D6FF"/>
     </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#A9B6C3" stroke-opacity=".055" stroke-width="1"/>
+    </pattern>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
-  
-  <!-- Background -->
-  <rect width="800" height="200" fill="url(#bg)" rx="12"/>
-  
-  <!-- Title -->
-  <text x="40" y="70" font-family="system-ui, -apple-system, sans-serif" font-size="48" font-weight="bold" fill="white">
-    Goly
-  </text>
-  
-  <!-- Subtitle -->
-  <text x="40" y="100" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#a0aec0">
-    Parallel Workspaces &amp; Worktree Cockpit
-  </text>
-  
-  <!-- Divider -->
-  <rect x="40" y="120" width="200" height="3" fill="url(#accent)" rx="2"/>
-  
-  <!-- Feature pills -->
-  <g font-family="system-ui, -apple-system, sans-serif" font-size="12">
-    <rect x="40" y="140" width="100" height="28" fill="#6366F1" fill-opacity="0.2" rx="14"/>
-    <text x="90" y="158" text-anchor="middle" fill="#818cf8">🎛️ Cockpit</text>
-    
-    <rect x="150" y="140" width="80" height="28" fill="#10B981" fill-opacity="0.2" rx="14"/>
-    <text x="190" y="158" text-anchor="middle" fill="#34d399">🔌 Ports</text>
-    
-    <rect x="240" y="140" width="70" height="28" fill="#F59E0B" fill-opacity="0.2" rx="14"/>
-    <text x="275" y="158" text-anchor="middle" fill="#fbbf24">🤖 Agents</text>
-    
-    <rect x="320" y="140" width="90" height="28" fill="#EC4899" fill-opacity="0.2" rx="14"/>
-    <text x="365" y="158" text-anchor="middle" fill="#f472b6">🔍 Review</text>
-    
-    <rect x="420" y="140" width="90" height="28" fill="#06B6D4" fill-opacity="0.2" rx="14"/>
-    <text x="465" y="158" text-anchor="middle" fill="#22d3ee">💾 Snapshots</text>
+
+  <rect width="1200" height="360" fill="url(#background)"/>
+  <rect width="1200" height="360" fill="url(#grid)"/>
+  <path d="M0 319H1200" stroke="#C6FF3D" stroke-opacity=".22"/>
+  <path d="M676 0L592 360" stroke="#54D6FF" stroke-opacity=".08" stroke-width="72"/>
+
+  <g transform="translate(62 46)">
+    <rect width="5" height="250" fill="url(#signal)"/>
+
+    <text x="28" y="15" fill="#91A0AE" font-family="'IBM Plex Mono','SFMono-Regular',Consolas,monospace" font-size="13" font-weight="600" letter-spacing="2.5">
+      GIT WORKTREE MISSION CONTROL // VS CODE
+    </text>
+
+    <text x="24" y="112" fill="#F4F7FA" font-family="'Avenir Next Condensed','Arial Narrow',sans-serif" font-size="92" font-weight="900" letter-spacing="-2">
+      GOLY
+    </text>
+    <rect x="29" y="126" width="332" height="5" fill="url(#signal)" filter="url(#glow)"/>
+
+    <text x="28" y="173" fill="#D8E0E7" font-family="'Avenir Next',system-ui,sans-serif" font-size="24" font-weight="600">
+      Run every branch.
+    </text>
+    <text x="28" y="205" fill="#91A0AE" font-family="'Avenir Next',system-ui,sans-serif" font-size="24">
+      Keep every context.
+    </text>
+
+    <g transform="translate(28 239)" font-family="'IBM Plex Mono','SFMono-Regular',Consolas,monospace" font-size="11" font-weight="700" letter-spacing=".7">
+      <rect width="100" height="28" fill="#C6FF3D"/>
+      <text x="50" y="18" text-anchor="middle" fill="#070A0D">WORKTREES</text>
+
+      <rect x="110" width="74" height="28" fill="#13212A" stroke="#54D6FF" stroke-opacity=".6"/>
+      <text x="147" y="18" text-anchor="middle" fill="#54D6FF">PORTS</text>
+
+      <rect x="194" width="78" height="28" fill="#231C12" stroke="#FFB454" stroke-opacity=".6"/>
+      <text x="233" y="18" text-anchor="middle" fill="#FFB454">AGENTS</text>
+
+      <rect x="282" width="82" height="28" fill="#171D23" stroke="#91A0AE" stroke-opacity=".5"/>
+      <text x="323" y="18" text-anchor="middle" fill="#D8E0E7">REVIEWS</text>
+    </g>
   </g>
-  
-  <!-- Terminal preview -->
-  <rect x="520" y="30" width="240" height="150" fill="#0f0f23" stroke="#2d2d4a" stroke-width="2" rx="8"/>
-  
-  <!-- Terminal header -->
-  <circle cx="535" cy="45" r="5" fill="#ef4444"/>
-  <circle cx="550" cy="45" r="5" fill="#eab308"/>
-  <circle cx="565" cy="45" r="5" fill="#22c55e"/>
-  
-  <!-- Terminal content -->
-  <text x="535" y="75" font-family="Menlo, Monaco, monospace" font-size="10" fill="#68d391">
-    ● main        ↑2 ~12  :3000
-  </text>
-  <text x="535" y="92" font-family="Menlo, Monaco, monospace" font-size="10" fill="#68d391">
-    ● feature/payment  :3001 🤖
-  </text>
-  <text x="535" y="109" font-family="Menlo, Monaco, monospace" font-size="10" fill="#a0aec0">
-    ● review/pr-152    :3002
-  </text>
-  
-  <!-- Cursor -->
-  <rect x="535" y="125" width="8" height="14" fill="#6366F1">
-    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
-  </rect>
-  
-  <!-- Install badge -->
-  <rect x="560" y="155" width="180" height="24" fill="#6366F1" rx="4"/>
-  <text x="650" y="171" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="white">
-    Install Now →
+
+  <g transform="translate(700 39)">
+    <rect width="440" height="279" rx="3" fill="#090D11" stroke="#2A3640" stroke-width="1.5"/>
+    <rect width="440" height="38" rx="3" fill="#111820"/>
+    <rect y="36" width="440" height="2" fill="#1D2831"/>
+
+    <circle cx="20" cy="19" r="4" fill="#FF6B6B"/>
+    <circle cx="34" cy="19" r="4" fill="#FFB454"/>
+    <circle cx="48" cy="19" r="4" fill="#C6FF3D"/>
+    <text x="72" y="23" fill="#7F8E9B" font-family="'IBM Plex Mono','SFMono-Regular',Consolas,monospace" font-size="11" letter-spacing="1.2">
+      GOLY / ACTIVE WORKTREES
+    </text>
+    <text x="416" y="23" text-anchor="end" fill="#C6FF3D" font-family="'IBM Plex Mono','SFMono-Regular',Consolas,monospace" font-size="10">
+      LIVE
+    </text>
+
+    <path d="M28 68V224" stroke="#33424E" stroke-width="2"/>
+    <path d="M28 118C49 118 48 103 66 103" fill="none" stroke="#54D6FF" stroke-width="2"/>
+    <path d="M28 173C49 173 48 158 66 158" fill="none" stroke="#FFB454" stroke-width="2"/>
+
+    <g font-family="'IBM Plex Mono','SFMono-Regular',Consolas,monospace">
+      <circle cx="28" cy="70" r="6" fill="#C6FF3D" filter="url(#glow)"/>
+      <text x="48" y="75" fill="#F4F7FA" font-size="15" font-weight="700">main</text>
+      <text x="214" y="75" fill="#91A0AE" font-size="11">↑2  ~3</text>
+      <rect x="320" y="56" width="78" height="25" rx="2" fill="#14221A" stroke="#C6FF3D" stroke-opacity=".4"/>
+      <text x="359" y="73" text-anchor="middle" fill="#C6FF3D" font-size="11">:3000</text>
+
+      <circle cx="66" cy="104" r="6" fill="#54D6FF"/>
+      <text x="86" y="109" fill="#F4F7FA" font-size="15" font-weight="700">feature/payments</text>
+      <text x="273" y="109" fill="#91A0AE" font-size="11">~8</text>
+      <rect x="320" y="90" width="78" height="25" rx="2" fill="#102029" stroke="#54D6FF" stroke-opacity=".45"/>
+      <text x="359" y="107" text-anchor="middle" fill="#54D6FF" font-size="11">:3001</text>
+
+      <circle cx="66" cy="159" r="6" fill="#FFB454"/>
+      <text x="86" y="164" fill="#F4F7FA" font-size="15" font-weight="700">review/pr-152</text>
+      <rect x="250" y="145" width="60" height="24" rx="2" fill="#261D11"/>
+      <text x="280" y="161" text-anchor="middle" fill="#FFB454" font-size="10">CODEX</text>
+      <rect x="320" y="145" width="78" height="25" rx="2" fill="#251C11" stroke="#FFB454" stroke-opacity=".45"/>
+      <text x="359" y="162" text-anchor="middle" fill="#FFB454" font-size="11">:4173</text>
+
+      <circle cx="28" cy="224" r="6" fill="#566572"/>
+      <text x="48" y="229" fill="#A9B6C3" font-size="15">hotfix/session</text>
+      <text x="214" y="229" fill="#697986" font-size="11">clean</text>
+      <rect x="320" y="210" width="78" height="25" rx="2" fill="#12191F" stroke="#394751"/>
+      <text x="359" y="227" text-anchor="middle" fill="#7F8E9B" font-size="11">idle</text>
+    </g>
+
+    <rect x="18" y="251" width="404" height="1" fill="#1D2831"/>
+    <text x="20" y="270" fill="#60717F" font-family="'IBM Plex Mono','SFMono-Regular',Consolas,monospace" font-size="9.5" letter-spacing=".7">
+      LOCAL-FIRST  •  NO TELEMETRY  •  SHELL-SAFE GIT
+    </text>
+  </g>
+
+  <text x="62" y="341" fill="#657582" font-family="'IBM Plex Mono','SFMono-Regular',Consolas,monospace" font-size="10" letter-spacing="1.2">
+    PARALLEL DEVELOPMENT, WITHOUT THE CONTEXT-SWITCHING TAX.
   </text>
 </svg>

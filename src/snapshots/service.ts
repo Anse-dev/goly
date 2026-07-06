@@ -1,16 +1,11 @@
 /**
- * Snapshot Service
- * 
- * Saves and restores workspace context including:
- * - Open files and editor layout
- * - Terminal sessions (cwd + command to re-run)
- * - Breakpoints
- * 
- * Note: Terminal state cannot be fully restored - we capture cwd and command
- * to re-propose to the user.
+ * Workspace-context snapshots.
  */
 
+import { randomUUID } from 'crypto';
+import { promises as fs } from 'fs';
 import * as vscode from 'vscode';
+import { isPathInside, toError } from '../core/types.js';
 import { logger } from '../core/logger.js';
 
 export interface Snapshot {
@@ -25,7 +20,6 @@ export interface Snapshot {
   editorColumns: EditorColumn[];
   terminals: TerminalSnapshot[];
   breakpoints: BreakpointSnapshot[];
-  layout?: string; // future: full layout state
 }
 
 export interface EditorColumn {
@@ -46,216 +40,395 @@ export interface BreakpointSnapshot {
   condition?: string;
 }
 
-const SCHEMA_VERSION = 1;
+const STORAGE_KEY = 'goly.snapshots.v2';
 
 export class SnapshotService {
   private snapshots: Snapshot[] = [];
-  private storageKey = `goly.snapshots.v${SCHEMA_VERSION}`;
 
-  constructor(private globalState: vscode.Memento) {
+  constructor(private readonly globalState: vscode.Memento) {
     this.load();
   }
 
-  /**
-   * Save current workspace context as a snapshot
-   */
-  async save(name: string, worktreePath: string, branch: string): Promise<Snapshot> {
-    logger.info(`Saving snapshot: ${name}`);
+  async save(
+    name: string,
+    worktreePath: string,
+    branch: string,
+  ): Promise<Snapshot> {
+    const normalizedName = name.trim();
+    if (!normalizedName) {
+      throw new Error('A snapshot name is required');
+    }
 
-    const openFiles = this.captureOpenFiles();
-    const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath;
-    const editorColumns = this.captureEditorColumns();
-    const terminals = this.captureTerminals();
-    const breakpoints = this.captureBreakpoints();
-
+    logger.info(`Saving snapshot ${normalizedName}`);
+    const activePath = vscode.window.activeTextEditor?.document.uri.fsPath;
     const snapshot: Snapshot = {
-      id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name,
+      id: `snap-${randomUUID()}`,
+      name: normalizedName,
       worktreePath,
       branch,
       createdAt: Date.now(),
-      openFiles,
-      activeFile,
-      editorColumns,
-      terminals,
-      breakpoints,
+      openFiles: this.captureOpenFiles(worktreePath),
+      activeFile:
+        activePath && isPathInside(worktreePath, activePath)
+          ? activePath
+          : undefined,
+      editorColumns: this.captureEditorColumns(worktreePath),
+      terminals: this.captureTerminals(worktreePath),
+      breakpoints: this.captureBreakpoints(worktreePath),
     };
 
     this.snapshots.push(snapshot);
-    this.persist();
-
-    return snapshot;
+    await this.persist();
+    return cloneSnapshot(snapshot);
   }
 
-  /**
-   * Restore a snapshot
-   */
   async restore(snapshotId: string): Promise<void> {
-    const snapshot = this.snapshots.find(s => s.id === snapshotId);
+    const snapshot = this.snapshots.find(
+      (candidate) => candidate.id === snapshotId,
+    );
     if (!snapshot) {
       throw new Error(`Snapshot not found: ${snapshotId}`);
     }
 
-    logger.info(`Restoring snapshot: ${snapshot.name}`);
+    logger.info(`Restoring snapshot ${snapshot.name}`);
+    const columns = new Map(
+      snapshot.editorColumns.map((editor) => [editor.file, editor.column]),
+    );
 
-    // Close all editors
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
-
-    // Restore open files
     for (const file of snapshot.openFiles) {
-      try {
-        const uri = vscode.Uri.file(file);
-        await vscode.commands.executeCommand('vscode.open', uri);
-      } catch (e) {
-        logger.warn(`Failed to open file: ${file}`, e);
+      if (
+        !isPathInside(snapshot.worktreePath, file) ||
+        file === snapshot.activeFile
+      ) {
+        continue;
       }
+      await this.openFile(file, columns.get(file), true);
     }
 
-    // Restore active file
-    if (snapshot.activeFile) {
-      try {
-        const uri = vscode.Uri.file(snapshot.activeFile);
-        await vscode.commands.executeCommand('vscode.open', uri);
-      } catch {
-        // Ignore
-      }
-    }
-
-    // Restore breakpoints
-    await this.restoreBreakpoints(snapshot.breakpoints);
-
-    // Note: Terminals cannot be restored - we just log them
-    if (snapshot.terminals.length > 0) {
-      vscode.window.showInformationMessage(
-        `Snapshot restored. ${snapshot.terminals.length} terminal(s) captured - please restart them manually.`
+    if (
+      snapshot.activeFile &&
+      isPathInside(snapshot.worktreePath, snapshot.activeFile)
+    ) {
+      await this.openFile(
+        snapshot.activeFile,
+        columns.get(snapshot.activeFile),
+        false,
       );
     }
 
+    await this.restoreBreakpoints(snapshot.worktreePath, snapshot.breakpoints);
+    this.restoreTerminals(snapshot.worktreePath, snapshot.terminals);
+
     snapshot.restoredAt = Date.now();
-    this.persist();
+    await this.persist();
   }
 
-  /**
-   * Delete a snapshot
-   */
-  delete(snapshotId: string): void {
-    this.snapshots = this.snapshots.filter(s => s.id !== snapshotId);
-    this.persist();
+  async delete(snapshotId: string): Promise<boolean> {
+    const previousLength = this.snapshots.length;
+    this.snapshots = this.snapshots.filter(
+      (snapshot) => snapshot.id !== snapshotId,
+    );
+    if (this.snapshots.length === previousLength) {
+      return false;
+    }
+    await this.persist();
+    return true;
   }
 
-  /**
-   * List all snapshots
-   */
-  list(): Snapshot[] {
-    return [...this.snapshots].sort((a, b) => b.createdAt - a.createdAt);
+  list(worktreePath?: string): Snapshot[] {
+    return this.snapshots
+      .filter(
+        (snapshot) => !worktreePath || snapshot.worktreePath === worktreePath,
+      )
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .map(cloneSnapshot);
   }
 
-  /**
-   * Get snapshot by ID
-   */
   get(snapshotId: string): Snapshot | undefined {
-    return this.snapshots.find(s => s.id === snapshotId);
+    const snapshot = this.snapshots.find(
+      (candidate) => candidate.id === snapshotId,
+    );
+    return snapshot ? cloneSnapshot(snapshot) : undefined;
   }
 
-  /**
-   * Export snapshot as JSON
-   */
   export(snapshotId: string): string {
     const snapshot = this.get(snapshotId);
-    if (!snapshot) throw new Error('Snapshot not found');
+    if (!snapshot) {
+      throw new Error('Snapshot not found');
+    }
     return JSON.stringify(snapshot, null, 2);
   }
 
-  /**
-   * Import snapshot from JSON
-   */
   async import(json: string): Promise<Snapshot> {
-    const imported = JSON.parse(json) as Snapshot;
-    imported.id = `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    imported.createdAt = Date.now();
-    imported.restoredAt = undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch (error) {
+      throw new Error(`Invalid snapshot JSON: ${toError(error).message}`);
+    }
+    if (!isSnapshot(parsed)) {
+      throw new Error(
+        'The imported snapshot does not match the expected schema',
+      );
+    }
+
+    const imported: Snapshot = {
+      ...parsed,
+      id: `snap-${randomUUID()}`,
+      createdAt: Date.now(),
+      restoredAt: undefined,
+      openFiles: parsed.openFiles.filter((file) =>
+        isPathInside(parsed.worktreePath, file),
+      ),
+      editorColumns: parsed.editorColumns.filter((editor) =>
+        isPathInside(parsed.worktreePath, editor.file),
+      ),
+      terminals: parsed.terminals.filter((terminal) =>
+        isPathInside(parsed.worktreePath, terminal.cwd),
+      ),
+      breakpoints: parsed.breakpoints.filter((breakpoint) => {
+        const uri = vscode.Uri.parse(breakpoint.uri);
+        return (
+          uri.scheme === 'file' && isPathInside(parsed.worktreePath, uri.fsPath)
+        );
+      }),
+    };
     this.snapshots.push(imported);
-    this.persist();
-    return imported;
+    await this.persist();
+    return cloneSnapshot(imported);
   }
 
-  // Private capture methods
-
-  private captureOpenFiles(): string[] {
-    const files: string[] = [];
-    
+  private captureOpenFiles(worktreePath: string): string[] {
+    const files = new Set<string>();
     for (const group of vscode.window.tabGroups.all) {
       for (const tab of group.tabs) {
-        if (tab.input instanceof vscode.TabInputText) {
-          files.push(tab.input.uri.fsPath);
+        if (
+          tab.input instanceof vscode.TabInputText &&
+          isPathInside(worktreePath, tab.input.uri.fsPath)
+        ) {
+          files.add(tab.input.uri.fsPath);
         }
       }
     }
-    
-    return files;
+    return [...files];
   }
 
-  private captureEditorColumns(): EditorColumn[] {
-    const columns: EditorColumn[] = [];
-    
-    for (const editor of vscode.window.visibleTextEditors) {
-      columns.push({
-        file: editor.document.uri.fsPath,
-        column: vscode.window.activeTextEditor === editor ? 0 : 1,
+  private captureEditorColumns(worktreePath: string): EditorColumn[] {
+    return vscode.window.visibleTextEditors.flatMap((editor) => {
+      if (!isPathInside(worktreePath, editor.document.uri.fsPath)) {
+        return [];
+      }
+      return [
+        {
+          file: editor.document.uri.fsPath,
+          column: editor.viewColumn ?? vscode.ViewColumn.One,
+        },
+      ];
+    });
+  }
+
+  private captureTerminals(worktreePath: string): TerminalSnapshot[] {
+    return vscode.window.terminals.flatMap((terminal) => {
+      const options = terminal.creationOptions;
+      if (!('cwd' in options) || !options.cwd) {
+        return [];
+      }
+      const cwd =
+        typeof options.cwd === 'string' ? options.cwd : options.cwd.fsPath;
+      if (!isPathInside(worktreePath, cwd)) {
+        return [];
+      }
+      return [{ name: terminal.name, cwd }];
+    });
+  }
+
+  private captureBreakpoints(worktreePath: string): BreakpointSnapshot[] {
+    return vscode.debug.breakpoints.flatMap((breakpoint) => {
+      if (
+        !(breakpoint instanceof vscode.SourceBreakpoint) ||
+        breakpoint.location.uri.scheme !== 'file' ||
+        !isPathInside(worktreePath, breakpoint.location.uri.fsPath)
+      ) {
+        return [];
+      }
+      return [
+        {
+          uri: breakpoint.location.uri.toString(),
+          line: breakpoint.location.range.start.line,
+          enabled: breakpoint.enabled,
+          condition: breakpoint.condition,
+        },
+      ];
+    });
+  }
+
+  private async openFile(
+    file: string,
+    column: number | undefined,
+    preserveFocus: boolean,
+  ): Promise<void> {
+    try {
+      await fs.access(file);
+      const document = await vscode.workspace.openTextDocument(
+        vscode.Uri.file(file),
+      );
+      await vscode.window.showTextDocument(document, {
+        viewColumn: normalizeViewColumn(column),
+        preserveFocus,
+        preview: false,
       });
+    } catch (error) {
+      logger.warn(`Could not restore file ${file}`, error);
     }
-    
-    return columns;
   }
 
-  private captureTerminals(): TerminalSnapshot[] {
-    // Terminal state cannot be captured - we return empty
-    // In the future, we could capture cwd if VS Code exposes it
-    return [];
-  }
+  private async restoreBreakpoints(
+    worktreePath: string,
+    breakpoints: readonly BreakpointSnapshot[],
+  ): Promise<void> {
+    const existing = vscode.debug.breakpoints.filter(
+      (breakpoint) =>
+        breakpoint instanceof vscode.SourceBreakpoint &&
+        breakpoint.location.uri.scheme === 'file' &&
+        isPathInside(worktreePath, breakpoint.location.uri.fsPath),
+    );
+    vscode.debug.removeBreakpoints(existing);
 
-  private captureBreakpoints(): BreakpointSnapshot[] {
-    const breakpoints: BreakpointSnapshot[] = [];
-    
-    const allBreakpoints = vscode.debug.breakpoints || [];
-    for (const bp of allBreakpoints) {
-      if (bp instanceof vscode.SourceBreakpoint) {
-        breakpoints.push({
-          uri: bp.location.uri.toString(),
-          line: bp.location.range.start.line,
-          enabled: bp.enabled,
-          condition: bp.condition,
-        });
-      }
-    }
-    
-    return breakpoints;
-  }
-
-  private async restoreBreakpoints(breakpoints: BreakpointSnapshot[]): Promise<void> {
-    // Clear existing breakpoints first
-    vscode.debug.removeBreakpoints(vscode.debug.breakpoints || []);
-    
-    for (const bp of breakpoints) {
+    const restored = breakpoints.flatMap((breakpoint) => {
       try {
-        const uri = vscode.Uri.parse(bp.uri);
-        const location = new vscode.Location(uri, new vscode.Range(bp.line, 0, bp.line, 0));
-        const breakpoint = new vscode.SourceBreakpoint(location, bp.enabled, bp.condition);
-        vscode.debug.addBreakpoints([breakpoint]);
-      } catch (e) {
-        logger.warn(`Failed to restore breakpoint: ${bp.uri}:${bp.line}`, e);
+        const uri = vscode.Uri.parse(breakpoint.uri);
+        if (uri.scheme !== 'file' || !isPathInside(worktreePath, uri.fsPath)) {
+          return [];
+        }
+        const location = new vscode.Location(
+          uri,
+          new vscode.Position(breakpoint.line, 0),
+        );
+        return [
+          new vscode.SourceBreakpoint(
+            location,
+            breakpoint.enabled,
+            breakpoint.condition,
+          ),
+        ];
+      } catch (error) {
+        logger.warn(`Could not restore breakpoint ${breakpoint.uri}`, error);
+        return [];
       }
+    });
+    if (restored.length > 0) {
+      vscode.debug.addBreakpoints(restored);
+    }
+  }
+
+  private restoreTerminals(
+    worktreePath: string,
+    terminals: readonly TerminalSnapshot[],
+  ): void {
+    for (const terminal of terminals) {
+      if (!isPathInside(worktreePath, terminal.cwd)) {
+        continue;
+      }
+      vscode.window.createTerminal({
+        name: terminal.name,
+        cwd: terminal.cwd,
+      });
     }
   }
 
   private load(): void {
-    const stored = this.globalState.get<Snapshot[]>(this.storageKey);
-    if (stored) {
-      this.snapshots = stored;
+    const stored =
+      this.globalState.get<unknown>(STORAGE_KEY) ??
+      this.globalState.get<unknown>('goly.snapshots.v1');
+    if (Array.isArray(stored)) {
+      this.snapshots = stored.filter(isSnapshot).map(cloneSnapshot);
     }
   }
 
-  private persist(): void {
-    this.globalState.update(this.storageKey, this.snapshots);
+  private async persist(): Promise<void> {
+    await this.globalState.update(STORAGE_KEY, this.snapshots);
   }
+}
+
+function normalizeViewColumn(column: number | undefined): vscode.ViewColumn {
+  if (
+    column === vscode.ViewColumn.One ||
+    column === vscode.ViewColumn.Two ||
+    column === vscode.ViewColumn.Three ||
+    column === vscode.ViewColumn.Four ||
+    column === vscode.ViewColumn.Five ||
+    column === vscode.ViewColumn.Six ||
+    column === vscode.ViewColumn.Seven ||
+    column === vscode.ViewColumn.Eight ||
+    column === vscode.ViewColumn.Nine
+  ) {
+    return column;
+  }
+  return vscode.ViewColumn.One;
+}
+
+function cloneSnapshot(snapshot: Snapshot): Snapshot {
+  return {
+    ...snapshot,
+    openFiles: [...snapshot.openFiles],
+    editorColumns: snapshot.editorColumns.map((editor) => ({ ...editor })),
+    terminals: snapshot.terminals.map((terminal) => ({ ...terminal })),
+    breakpoints: snapshot.breakpoints.map((breakpoint) => ({ ...breakpoint })),
+  };
+}
+
+function isSnapshot(value: unknown): value is Snapshot {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const snapshot = value as Partial<Snapshot>;
+  return (
+    typeof snapshot.id === 'string' &&
+    typeof snapshot.name === 'string' &&
+    typeof snapshot.worktreePath === 'string' &&
+    typeof snapshot.branch === 'string' &&
+    typeof snapshot.createdAt === 'number' &&
+    Array.isArray(snapshot.openFiles) &&
+    snapshot.openFiles.every((file) => typeof file === 'string') &&
+    Array.isArray(snapshot.editorColumns) &&
+    snapshot.editorColumns.every(isEditorColumn) &&
+    Array.isArray(snapshot.terminals) &&
+    snapshot.terminals.every(isTerminalSnapshot) &&
+    Array.isArray(snapshot.breakpoints) &&
+    snapshot.breakpoints.every(isBreakpointSnapshot)
+  );
+}
+
+function isEditorColumn(value: unknown): value is EditorColumn {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const column = value as Partial<EditorColumn>;
+  return typeof column.file === 'string' && Number.isInteger(column.column);
+}
+
+function isTerminalSnapshot(value: unknown): value is TerminalSnapshot {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const terminal = value as Partial<TerminalSnapshot>;
+  return (
+    typeof terminal.name === 'string' &&
+    typeof terminal.cwd === 'string' &&
+    (terminal.command === undefined || typeof terminal.command === 'string')
+  );
+}
+
+function isBreakpointSnapshot(value: unknown): value is BreakpointSnapshot {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const breakpoint = value as Partial<BreakpointSnapshot>;
+  return (
+    typeof breakpoint.uri === 'string' &&
+    Number.isInteger(breakpoint.line) &&
+    typeof breakpoint.enabled === 'boolean' &&
+    (breakpoint.condition === undefined ||
+      typeof breakpoint.condition === 'string')
+  );
 }

@@ -1,16 +1,22 @@
 /**
- * Git Client - Spawns Git CLI and parses porcelain output
- * 
- * All git operations go through this module. Parsers are pure functions
- * tested against real git output fixtures.
+ * Git client backed by execFile.
+ *
+ * Arguments are passed directly to Git without a shell. Parsers use Git's
+ * machine-readable, NUL-delimited formats so paths containing whitespace are
+ * preserved.
  */
 
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { Result, ok, err } from '../core/types.js';
+import { execFile } from 'child_process';
+import * as path from 'path';
+import { err, ok, toError } from '../core/types.js';
+import type { Result } from '../core/types.js';
 import { logger } from '../core/logger.js';
+import { parseBranchList, parseStatus, parseWorktreeList } from './parsers.js';
 
-const execAsync = promisify(exec);
+export { parseBranchList, parseStatus, parseWorktreeList } from './parsers.js';
+
+const GIT_TIMEOUT_MS = 30_000;
+const GIT_MAX_BUFFER = 10 * 1024 * 1024;
 
 export interface Worktree {
   path: string;
@@ -47,315 +53,236 @@ export interface RepositoryInfo {
   remotes: string[];
 }
 
-export class GitClient {
-  constructor(private cwd: string) {}
+interface ProcessOutput {
+  stdout: string;
+  stderr: string;
+}
 
-  /**
-   * Run a git command and return the result
-   */
-  private async run(args: string[]): Promise<Result<string>> {
-    const cmd = `git ${args.join(' ')}`;
-    logger.debug(`Git: ${cmd}`);
-    
+export class GitClient {
+  constructor(private readonly cwd: string) {}
+
+  private async run(args: readonly string[]): Promise<Result<string>> {
+    logger.debug('Git command', ['git', ...args]);
+
     try {
-      const { stdout, stderr } = await execAsync(cmd, {
-        cwd: this.cwd,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024, // 10MB
-        timeout: 30000,
-      });
-      
-      if (stderr && !stderr.includes('warning')) {
-        logger.warn(`Git stderr: ${stderr}`);
+      const { stdout, stderr } = await executeFile('git', args, this.cwd);
+      if (stderr.trim() && !stderr.toLowerCase().includes('warning')) {
+        logger.warn('Git stderr', stderr.trim());
       }
-      
       return ok(stdout);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      logger.error(`Git failed: ${cmd}`, e);
-      return err(new Error(error));
+    } catch (error) {
+      const cause = toError(error);
+      logger.error(`Git command failed in ${this.cwd}`, cause);
+      return err(cause);
     }
   }
 
-  /**
-   * Check if directory is a git repository
-   */
   async isRepository(): Promise<boolean> {
     const result = await this.run(['rev-parse', '--is-inside-work-tree']);
     return result.ok && result.value.trim() === 'true';
   }
 
-  /**
-   * Get repository root path
-   */
   async getRepositoryRoot(): Promise<Result<string>> {
     const result = await this.run(['rev-parse', '--show-toplevel']);
-    if (!result.ok) return result;
-    return ok(result.value.trim());
+    return result.ok ? ok(result.value.trim()) : result;
   }
 
-  /**
-   * Get current branch name
-   */
   async getCurrentBranch(): Promise<Result<string>> {
     const result = await this.run(['branch', '--show-current']);
-    if (!result.ok) return result;
-    return ok(result.value.trim());
+    return result.ok ? ok(result.value.trim() || 'detached') : result;
   }
 
-  /**
-   * Get repository information
-   */
   async getRepositoryInfo(): Promise<Result<RepositoryInfo>> {
-    const root = await this.getRepositoryRoot();
-    if (!root.ok) return root;
-    
-    const branch = await this.getCurrentBranch();
-    if (!branch.ok) return branch;
-    
-    const remotesResult = await this.run(['remote']);
-    const remotes = remotesResult.ok 
-      ? remotesResult.value.trim().split('\n').filter(Boolean)
-      : [];
+    const [root, branch, remotesResult] = await Promise.all([
+      this.getRepositoryRoot(),
+      this.getCurrentBranch(),
+      this.run(['remote']),
+    ]);
 
-    const name = root.value.split('/').pop() || 'repository';
-    
+    if (!root.ok) {
+      return root;
+    }
+    if (!branch.ok) {
+      return branch;
+    }
+
     return ok({
-      name,
+      name: path.basename(root.value) || 'repository',
       path: this.cwd,
       root: root.value,
       currentBranch: branch.value,
-      remotes,
+      remotes: remotesResult.ok
+        ? remotesResult.value
+            .split(/\r?\n/)
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : [],
     });
   }
 
-  /**
-   * List all worktrees using porcelain output
-   */
   async listWorktrees(): Promise<Result<Worktree[]>> {
-    const result = await this.run(['worktree', 'list', '--porcelain']);
-    if (!result.ok) return result;
-    
-    return ok(parseWorktreeList(result.value));
+    const result = await this.run(['worktree', 'list', '--porcelain', '-z']);
+    return result.ok ? ok(parseWorktreeList(result.value)) : result;
   }
 
-  /**
-   * Get status using porcelain v2 format
-   */
   async getStatus(): Promise<Result<StatusInfo>> {
     const branch = await this.getCurrentBranch();
-    if (!branch.ok) return branch;
+    if (!branch.ok) {
+      return branch;
+    }
 
-    const result = await this.run(['status', '--porcelain=v2', '-b']);
-    if (!result.ok) return result;
-    
-    return ok(parseStatus(result.value, branch.value));
-  }
-
-  /**
-   * List all branches
-   */
-  async listBranches(remote = false): Promise<Result<BranchInfo[]>> {
-    const flags = remote ? ['-a'] : ['-l'];
     const result = await this.run([
-      'branch',
-      ...flags,
-      '--format=%(refname:short)|%(upstream:short)|%(HEAD)|%(aheadbehind)',
+      'status',
+      '--porcelain=v2',
+      '--branch',
+      '-z',
     ]);
-    
-    if (!result.ok) return result;
-    return ok(parseBranchList(result.value));
+    return result.ok ? ok(parseStatus(result.value, branch.value)) : result;
   }
 
-  /**
-   * Fetch from remote
-   */
+  async listBranches(includeRemotes = false): Promise<Result<BranchInfo[]>> {
+    const refs = includeRemotes
+      ? ['refs/heads', 'refs/remotes']
+      : ['refs/heads'];
+    const result = await this.run([
+      'for-each-ref',
+      '--format=%(refname)%00%(refname:short)%00%(upstream:short)%00%(HEAD)%00%(upstream:track,nobracket)',
+      ...refs,
+    ]);
+
+    return result.ok ? ok(parseBranchList(result.value)) : result;
+  }
+
+  async validateBranchName(branch: string): Promise<boolean> {
+    if (!branch.trim()) {
+      return false;
+    }
+    const result = await this.run(['check-ref-format', '--branch', branch]);
+    return result.ok;
+  }
+
   async fetch(remote = 'origin', ref?: string): Promise<Result<void>> {
-    const args = ref 
-      ? ['fetch', remote, ref]
-      : ['fetch', remote];
-    
+    const args = ['fetch', '--', remote];
+    if (ref) {
+      args.push(ref);
+    }
     const result = await this.run(args);
-    if (!result.ok) return result;
-    return ok(undefined as void);
+    return result.ok ? ok(undefined) : result;
   }
 
-  /**
-   * Create a new worktree
-   */
+  async resolveRef(ref: string): Promise<Result<string>> {
+    const result = await this.run([
+      'rev-parse',
+      '--verify',
+      '--end-of-options',
+      `${ref}^{commit}`,
+    ]);
+    return result.ok ? ok(result.value.trim()) : result;
+  }
+
   async createWorktree(
-    path: string,
+    worktreePath: string,
     branch: string,
     createBranch = false,
-    upstream?: string
+    startPoint?: string,
   ): Promise<Result<void>> {
+    if (!(await this.validateBranchName(branch))) {
+      return err(new Error(`Invalid branch name: ${branch}`));
+    }
+
     const args = ['worktree', 'add'];
-    
     if (createBranch) {
       args.push('-b', branch);
     }
-    
-    args.push(path, upstream || branch);
-    
+    args.push('--', worktreePath);
+
+    if (startPoint) {
+      args.push(startPoint);
+    } else if (!createBranch) {
+      args.push(branch);
+    }
+
     const result = await this.run(args);
-    if (!result.ok) return result;
-    return ok(undefined as void);
+    return result.ok ? ok(undefined) : result;
   }
 
-  /**
-   * Remove a worktree
-   */
-  async removeWorktree(path: string, force = false): Promise<Result<void>> {
-    const args = force 
-      ? ['worktree', 'remove', '--force', path]
-      : ['worktree', 'remove', path];
-    
+  async removeWorktree(
+    worktreePath: string,
+    force = false,
+  ): Promise<Result<void>> {
+    const args = ['worktree', 'remove'];
+    if (force) {
+      args.push('--force');
+    }
+    args.push('--', worktreePath);
     const result = await this.run(args);
-    if (!result.ok) return result;
-    return ok(undefined as void);
+    return result.ok ? ok(undefined) : result;
   }
 
-  /**
-   * Prune stale worktree references
-   */
+  async deleteBranch(branch: string, force = false): Promise<Result<void>> {
+    const normalized = branch.replace(/^refs\/heads\//, '');
+    if (!(await this.validateBranchName(normalized))) {
+      return err(new Error(`Invalid branch name: ${branch}`));
+    }
+
+    const result = await this.run([
+      'branch',
+      force ? '-D' : '-d',
+      '--',
+      normalized,
+    ]);
+    return result.ok ? ok(undefined) : result;
+  }
+
   async pruneWorktrees(): Promise<Result<void>> {
     const result = await this.run(['worktree', 'prune']);
-    if (!result.ok) return result;
-    return ok(undefined as void);
+    return result.ok ? ok(undefined) : result;
   }
 
-  /**
-   * Get remote URL
-   */
   async getRemoteUrl(remote = 'origin'): Promise<Result<string>> {
-    const result = await this.run(['remote', 'get-url', remote]);
-    if (!result.ok) return result;
-    return ok(result.value.trim());
+    const result = await this.run(['remote', 'get-url', '--', remote]);
+    return result.ok ? ok(result.value.trim()) : result;
+  }
+
+  async diff(baseRef: string, compareRef: string): Promise<Result<string>> {
+    const result = await this.run([
+      'diff',
+      '--no-ext-diff',
+      '--no-color',
+      `${baseRef}...${compareRef}`,
+      '--',
+    ]);
+    return result.ok ? ok(result.value) : result;
   }
 }
 
-/**
- * Parse git worktree list --porcelain output
- */
-function parseWorktreeList(output: string): Worktree[] {
-  const worktrees: Worktree[] = [];
-  const entries = output.split(/\n\n(?=worktree )/);
-
-  for (const entry of entries) {
-    if (!entry.trim()) continue;
-
-    const lines = entry.split('\n');
-    let path = '';
-    let branch = '';
-    let isMain = false;
-    let isBare = false;
-    let head = '';
-
-    for (const line of lines) {
-      if (line.startsWith('worktree ')) {
-        path = line.slice(9).trim();
-      } else if (line.startsWith('HEAD ')) {
-        head = line.slice(5).trim();
-        // Main worktree has HEAD pointing directly to commit
-        isMain = !head.includes('worktrees');
-      } else if (line.startsWith('branch ')) {
-        branch = line.slice(7).trim();
-      } else if (line.startsWith('bare ')) {
-        isBare = line.slice(5).trim() === 'true';
-      }
-    }
-
-    if (path) {
-      worktrees.push({
-        path,
-        branch: branch || head || 'detached',
-        isMain,
-        isBare,
-        head,
-      });
-    }
-  }
-
-  return worktrees;
-}
-
-/**
- * Parse git status --porcelain=v2 -b output
- */
-function parseStatus(output: string, currentBranch: string): StatusInfo {
-  const lines = output.split('\n');
-  const modified: string[] = [];
-  const staged: string[] = [];
-  const untracked: string[] = [];
-  
-  let ahead = 0;
-  let behind = 0;
-  let isClean = true;
-
-  for (const line of lines) {
-    // Parse staged changes (1.2) or untracked (??)
-    if (line.startsWith('1 ') || line.startsWith('2 ') || line.startsWith('? ')) {
-      isClean = false;
-      const file = line.slice(3).split(' ')[2] || line.slice(3);
-      
-      if (line.startsWith('?')) {
-        untracked.push(file);
-      } else {
-        const indexStatus = line[0];
-        const workTreeStatus = line[1];
-        
-        if (indexStatus !== '.' && indexStatus !== '?') {
-          staged.push(file);
+function executeFile(
+  file: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<ProcessOutput> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      [...args],
+      {
+        cwd,
+        encoding: 'utf8',
+        maxBuffer: GIT_MAX_BUFFER,
+        timeout: GIT_TIMEOUT_MS,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const stderrText = String(stderr).trim();
+          if (stderrText && !error.message.includes(stderrText)) {
+            error.message = `${error.message}: ${stderrText}`;
+          }
+          reject(error);
+          return;
         }
-        if (workTreeStatus !== '.' && workTreeStatus !== '?') {
-          modified.push(file);
-        }
-      }
-    }
-    
-    // Parse ahead/behind from branch line
-    if (line.startsWith('# branch.ab ')) {
-      const parts = line.slice(12).trim().split(' ');
-      for (const part of parts) {
-        if (part.startsWith('+')) {
-          ahead = parseInt(part.slice(1), 10) || 0;
-        } else if (part.startsWith('-')) {
-          behind = parseInt(part.slice(1), 10) || 0;
-        }
-      }
-    }
-  }
-
-  return {
-    branch: currentBranch,
-    isClean,
-    modified: [...new Set(modified)],
-    staged: [...new Set(staged)],
-    untracked: [...new Set(untracked)],
-    ahead,
-    behind,
-  };
-}
-
-/**
- * Parse git branch list output
- */
-function parseBranchList(output: string): BranchInfo[] {
-  const branches: BranchInfo[] = [];
-  
-  for (const line of output.trim().split('\n')) {
-    if (!line) continue;
-    
-    const [name, upstream, head, aheadBehind] = line.split('|');
-    if (!name) continue;
-    
-    branches.push({
-      name: name.trim(),
-      isRemote: name.includes('remotes/') || name.startsWith('origin/'),
-      isCurrent: head === '*',
-      upstream: upstream || undefined,
-    });
-  }
-  
-  return branches;
+        resolve({ stdout: String(stdout), stderr: String(stderr) });
+      },
+    );
+  });
 }

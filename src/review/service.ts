@@ -1,15 +1,15 @@
 /**
- * Review Mode Service
- * 
- * Creates ephemeral worktrees for PR/branch review with auto-cleanup.
+ * Review sessions backed by disposable worktrees.
  */
 
+import * as path from 'path';
 import * as vscode from 'vscode';
-import { GitClient } from '../git/client.js';
-import { WorktreeService } from '../worktrees/service.js';
-import { logger } from '../core/logger.js';
 import { getConfig } from '../core/config.js';
-import { expandTilde, getBasename } from '../core/types.js';
+import { logger } from '../core/logger.js';
+import { expandTilde, err, ok, toError } from '../core/types.js';
+import type { Result } from '../core/types.js';
+import type { GitClient } from '../git/client.js';
+import type { WorktreeService } from '../worktrees/service.js';
 
 export interface ReviewSession {
   id: string;
@@ -20,123 +20,214 @@ export interface ReviewSession {
   notes: string[];
 }
 
+const STORAGE_KEY = 'goly.reviewSessions.v1';
+
 export class ReviewService {
-  private sessions = new Map<string, ReviewSession>();
-  private config = getConfig();
+  private readonly sessions = new Map<string, ReviewSession>();
 
   constructor(
-    private git: GitClient,
-    private worktreeService: WorktreeService
-  ) {}
+    private readonly git: GitClient,
+    private readonly worktreeService: WorktreeService,
+    private readonly globalState: vscode.Memento,
+  ) {
+    const stored = this.globalState.get<unknown>(STORAGE_KEY);
+    if (Array.isArray(stored)) {
+      for (const candidate of stored) {
+        if (isReviewSession(candidate)) {
+          this.sessions.set(candidate.id, candidate);
+        }
+      }
+    }
+  }
 
-  /**
-   * Start a review session for a branch or PR
-   */
-  async startReview(ref: string, remote = 'origin'): Promise<Result<ReviewSession>> {
-    logger.info(`Starting review for: ${ref}`);
-
-    // Fetch the ref first
-    const fetchResult = await this.git.fetch(remote, ref);
-    if (!fetchResult.ok) {
-      return { ok: false, error: new Error(`Failed to fetch ${ref}: ${fetchResult.error}`) };
+  async startReview(
+    ref: string,
+    remote = 'origin',
+  ): Promise<Result<ReviewSession>> {
+    const trimmedRef = ref.trim();
+    if (!trimmedRef) {
+      return err(new Error('A branch or pull-request ref is required'));
     }
 
-    // Create ephemeral worktree name
-    const safeRef = ref.replace(/[^a-zA-Z0-9-_]/g, '-');
-    const branchName = `review/${safeRef}`;
-    const worktreeDir = expandTilde(this.config.baseDirectory);
-    const worktreePath = `${worktreeDir}/review-${safeRef}`;
+    logger.info(`Starting review for ${trimmedRef}`);
+    const fetchRef = trimmedRef.startsWith(`${remote}/`)
+      ? trimmedRef.slice(remote.length + 1)
+      : trimmedRef;
+    const fetchResult = await this.git.fetch(remote, fetchRef);
+    if (!fetchResult.ok) {
+      return err(
+        new Error(
+          `Could not fetch ${trimmedRef}: ${fetchResult.error.message}`,
+        ),
+      );
+    }
 
-    // Create the worktree
+    const commitResult = await this.git.resolveRef('FETCH_HEAD');
+    if (!commitResult.ok) {
+      return err(
+        new Error(
+          `Could not resolve fetched ref: ${commitResult.error.message}`,
+        ),
+      );
+    }
+
+    const suffix = Date.now().toString(36);
+    const safeRef = sanitizeRef(trimmedRef);
+    const branchName = `review/${safeRef}-${suffix}`;
+    const worktreePath = path.join(
+      expandTilde(getConfig().baseDirectory),
+      `review-${safeRef}-${suffix}`,
+    );
+
     const createResult = await this.worktreeService.create(
       branchName,
       worktreePath,
-      true,
-      false // Don't open yet
+      {
+        createBranch: true,
+        startPoint: commitResult.value,
+        openInNewWindow: false,
+      },
     );
-
     if (!createResult.ok) {
-      return { ok: false, error: new Error(`Failed to create worktree: ${createResult.error}`) };
+      return err(
+        new Error(
+          `Could not create review worktree: ${createResult.error.message}`,
+        ),
+      );
+    }
+    for (const warning of createResult.value.warnings) {
+      logger.warn(`Review worktree warning: ${warning}`);
     }
 
     const session: ReviewSession = {
-      id: `review-${Date.now()}`,
-      ref,
-      worktreePath,
+      id: `review-${suffix}`,
+      ref: trimmedRef,
+      worktreePath: createResult.value.worktree.path,
       branch: branchName,
       createdAt: Date.now(),
       notes: [],
     };
-
     this.sessions.set(session.id, session);
+    await this.persist();
 
-    // Open in new window
     try {
       await vscode.commands.executeCommand(
         'vscode.openFolder',
-        vscode.Uri.file(worktreePath),
-        { newWindow: true }
+        vscode.Uri.file(session.worktreePath),
+        { forceNewWindow: true },
       );
-    } catch (e) {
-      logger.warn('Failed to open review window', e);
+    } catch (error) {
+      logger.warn(
+        `Review created, but the window could not be opened: ${toError(error).message}`,
+      );
     }
 
-    return { ok: true, value: session };
+    return ok({ ...session, notes: [...session.notes] });
   }
 
-  /**
-   * List active review sessions
-   */
   listSessions(): ReviewSession[] {
-    return Array.from(this.sessions.values());
+    return [...this.sessions.values()]
+      .map((session) => ({ ...session, notes: [...session.notes] }))
+      .sort((left, right) => right.createdAt - left.createdAt);
   }
 
-  /**
-   * Add a note to a review session
-   */
-  addNote(sessionId: string, note: string): void {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      session.notes.push(note);
-    }
-  }
-
-  /**
-   * End and cleanup a review session
-   */
-  async endReview(sessionId: string, deleteBranch = false): Promise<Result<void>> {
+  async addNote(sessionId: string, note: string): Promise<Result<void>> {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      return { ok: false, error: new Error('Session not found') };
+      return err(new Error('Review session not found'));
+    }
+    const trimmedNote = note.trim();
+    if (!trimmedNote) {
+      return err(new Error('A note cannot be empty'));
+    }
+    session.notes.push(trimmedNote);
+    await this.persist();
+    return ok(undefined);
+  }
+
+  async endReview(
+    sessionId: string,
+    deleteBranch = true,
+  ): Promise<Result<void>> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return err(new Error('Review session not found'));
     }
 
-    logger.info(`Ending review session: ${sessionId}`);
+    logger.info(`Ending review session ${sessionId}`);
+    if (!this.worktreeService.get(session.worktreePath)) {
+      if (deleteBranch) {
+        const branchResult = await this.git.deleteBranch(session.branch, true);
+        if (!branchResult.ok) {
+          return branchResult;
+        }
+      }
+      this.sessions.delete(sessionId);
+      await this.persist();
+      return ok(undefined);
+    }
 
-    // Remove the worktree
-    const removeResult = await this.worktreeService.remove(session.worktreePath, deleteBranch);
+    const removeResult = await this.worktreeService.remove(
+      session.worktreePath,
+      deleteBranch,
+      deleteBranch,
+    );
     if (!removeResult.ok) {
-      logger.warn('Failed to remove worktree, manual cleanup may be needed', removeResult.error);
+      return removeResult;
     }
 
     this.sessions.delete(sessionId);
-    return { ok: true, value: undefined as void };
+    await this.persist();
+    return ok(undefined);
   }
 
-  /**
-   * Cleanup all review sessions
-   */
-  async cleanupAll(): Promise<void> {
-    for (const session of this.sessions.values()) {
-      await this.endReview(session.id, false);
+  async cleanupAll(deleteBranches = true): Promise<Result<void>> {
+    const failures: string[] = [];
+    for (const session of [...this.sessions.values()]) {
+      const result = await this.endReview(session.id, deleteBranches);
+      if (!result.ok) {
+        failures.push(`${session.ref}: ${result.error.message}`);
+      }
     }
+    return failures.length === 0
+      ? ok(undefined)
+      : err(
+          new Error(
+            `Some review sessions could not be removed: ${failures.join('; ')}`,
+          ),
+        );
   }
 
-  /**
-   * Get session by ID
-   */
   get(sessionId: string): ReviewSession | undefined {
-    return this.sessions.get(sessionId);
+    const session = this.sessions.get(sessionId);
+    return session ? { ...session, notes: [...session.notes] } : undefined;
+  }
+
+  private async persist(): Promise<void> {
+    await this.globalState.update(STORAGE_KEY, [...this.sessions.values()]);
   }
 }
 
-type Result<T> = { ok: true; value: T } | { ok: false; error: Error };
+function sanitizeRef(ref: string): string {
+  const sanitized = ref
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return sanitized || 'change';
+}
+
+function isReviewSession(value: unknown): value is ReviewSession {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Partial<ReviewSession>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.ref === 'string' &&
+    typeof candidate.worktreePath === 'string' &&
+    typeof candidate.branch === 'string' &&
+    typeof candidate.createdAt === 'number' &&
+    Array.isArray(candidate.notes) &&
+    candidate.notes.every((note) => typeof note === 'string')
+  );
+}

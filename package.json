@@ -1,32 +1,41 @@
 {
   "name": "goly",
-  "displayName": "Goly — Parallel Workspaces & Worktree Cockpit",
-  "description": "The cockpit for parallel development sessions. Monitor worktrees, ports, processes, and agents in real-time. Native in VS Code.",
+  "displayName": "Goly — Git Worktree Manager",
+  "description": "Run Git branches side by side. Manage worktrees, spot port conflicts, track coding agents, review changes, and restore context.",
   "version": "1.0.0",
   "publisher": "goly-dev",
+  "icon": "media/logo.png",
+  "repository": "https://github.com/Anse-dev/goly",
   "engines": {
     "vscode": "^1.100.0"
   },
   "categories": [
-    "Other",
-    "Git"
+    "SCM Providers",
+    "Other"
   ],
   "keywords": [
+    "git",
+    "git worktree",
     "worktree",
-    "parallel",
-    "branches",
+    "worktree manager",
+    "parallel development",
+    "branch manager",
+    "pull request",
+    "code review",
+    "ai coding agents",
     "claude code",
-    "agents",
-    "review",
-    "multi-branch",
-    "workspace",
-    "development"
+    "codex",
+    "cursor",
+    "port monitor",
+    "workspace manager",
+    "developer tools"
   ],
   "activationEvents": [
     "onView:goly.sidebar",
     "onCommand:goly.refresh",
     "onCommand:goly.create",
     "onCommand:goly.review",
+    "onCommand:goly.endReview",
     "onCommand:goly.snapshot",
     "workspaceContains:.git"
   ],
@@ -82,6 +91,12 @@
         "icon": "$(git-pull-request)"
       },
       {
+        "command": "goly.endReview",
+        "title": "Goly: End Review Session",
+        "category": "Goly",
+        "icon": "$(close)"
+      },
+      {
         "command": "goly.copyEnv",
         "title": "Goly: Copy Environment Files",
         "category": "Goly",
@@ -94,12 +109,20 @@
         "icon": "$(diff)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "goly",
+          "title": "Goly",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "goly": [
         {
           "id": "goly.sidebar",
-          "name": "Goly",
-          "icon": "$(layers)"
+          "name": "Worktrees"
         }
       ]
     },
@@ -125,28 +148,28 @@
       "view/item/context": [
         {
           "command": "goly.open",
-          "when": "view == goly.sidebar",
+          "when": "view == goly.sidebar && (viewItem == worktree || viewItem == mainWorktree)",
           "group": "inline"
         },
         {
           "command": "goly.terminal",
-          "when": "view == goly.sidebar"
+          "when": "view == goly.sidebar && (viewItem == worktree || viewItem == mainWorktree)"
         },
         {
           "command": "goly.snapshot",
-          "when": "view == goly.sidebar"
+          "when": "view == goly.sidebar && (viewItem == worktree || viewItem == mainWorktree)"
         },
         {
           "command": "goly.compare",
-          "when": "view == goly.sidebar"
+          "when": "view == goly.sidebar && viewItem == worktree"
         },
         {
           "command": "goly.copyEnv",
-          "when": "view == goly.sidebar"
+          "when": "view == goly.sidebar && viewItem == worktree"
         },
         {
           "command": "goly.remove",
-          "when": "view == goly.sidebar"
+          "when": "view == goly.sidebar && viewItem == worktree"
         }
       ]
     },
@@ -180,6 +203,7 @@
         "goly.refreshInterval": {
           "type": "number",
           "default": 5000,
+          "minimum": 0,
           "description": "Auto refresh interval in milliseconds (0 to disable)"
         },
         "goly.autoOpenInNewWindow": {
@@ -197,17 +221,17 @@
           "default": true,
           "description": "Show confirmation before deleting branch with worktree"
         },
-        "goly.portRangeStart": {
-          "type": "number",
-          "default": 3000,
-          "description": "Starting port for auto-assigned development servers"
-        },
         "goly.envFilePatterns": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "default": [".env.local", ".env.*.local", "*.env"],
+          "default": [
+            ".env",
+            ".env.local",
+            ".env.*",
+            "*.env"
+          ],
           "description": "File patterns to copy to new worktrees"
         },
         "goly.postCreateCommands": {
@@ -215,45 +239,63 @@
           "items": {
             "type": "string"
           },
-          "default": ["npm install"],
+          "default": [
+            "npm install"
+          ],
           "description": "Commands to run after creating a worktree"
         },
-        "goly.maxWorktreesFree": {
+        "goly.maxWorktrees": {
           "type": "number",
-          "default": 5,
-          "description": "Maximum worktrees in free tier"
+          "default": 0,
+          "minimum": 0,
+          "description": "Maximum additional worktrees (0 for unlimited)"
         }
       }
     }
   },
+  "homepage": "https://github.com/Anse-dev/goly#readme",
+  "bugs": {
+    "url": "https://github.com/Anse-dev/goly/issues"
+  },
+  "galleryBanner": {
+    "color": "#070A0D",
+    "theme": "dark"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Goly runs Git and configured post-create commands, so workspace trust is required."
+    }
+  },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "npm run build:extension && npm run build:webview",
+    "build": "npm run typecheck && npm run build:extension",
     "build:extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:esbuild",
-    "build:webview": "esbuild src/ui/dashboard/index.tsx --bundle --outfile=dist/webview.js --loader:.tsx=tsx --loader:.ts=ts --define:process.env.NODE_ENV=\\\"production\\\"",
+    "build:integration": "esbuild src/test/runTest.ts src/test/integration/index.ts --bundle --platform=node --format=cjs --outbase=src/test --outdir=out/test --external:vscode",
     "watch": "npm run build:extension -- --watch",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:integration": "node ./out/test/runTest.js",
-    "lint": "eslint src --ext .ts,.tsx",
-    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.tsx\"",
-    "typecheck": "tsc --noEmit"
+    "test:integration": "npm run build && npm run build:integration && node ./out/test/runTest.js",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\" \"*.ts\" \"*.json\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"*.ts\" \"*.json\"",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test",
+    "package": "npm run build && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
-    "@types/vscode": "^1.100.0",
-    "@types/mocha": "^10.0.7",
-    "@vscode/test-electron": "^2.3.10",
-    "@vitest/coverage-v8": "^1.6.0",
-    "esbuild": "^0.21.5",
-    "eslint": "^8.57.0",
-    "typescript": "^5.4.5",
-    "vitest": "^1.6.0",
-    "prettier": "^3.3.2",
+    "@types/vscode": "1.100.0",
     "@typescript-eslint/eslint-plugin": "^7.13.0",
-    "@typescript-eslint/parser": "^7.13.0"
-  },
-  "dependencies": {
-    "zustand": "^4.5.4"
+    "@typescript-eslint/parser": "^7.13.0",
+    "@vitest/coverage-v8": "^3.2.7",
+    "@vscode/test-electron": "^2.3.10",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.2",
+    "typescript": "^5.4.5",
+    "vitest": "^3.2.7"
   }
 }

@@ -46,32 +46,53 @@ class GolyLogger {
 
   error(message: string, error?: unknown): void {
     if (this.shouldLog('error')) {
-      const stack = error instanceof Error ? `\n${error.stack}` : '';
-      this.log('ERROR', `${message}${stack}`, []);
+      const details =
+        error === undefined
+          ? ''
+          : `\n${error instanceof Error ? (error.stack ?? error.message) : this.serialize(error)}`;
+      this.log('ERROR', `${message}${details}`, []);
     }
   }
 
   private log(level: string, message: string, args: unknown[]): void {
-    const timestamp = new Date().toISOString().split('T')[1]?.split('.')[0] || '';
+    const timestamp =
+      new Date().toISOString().split('T')[1]?.split('.')[0] || '';
     const formatted = `[${timestamp}] [${level}] ${message}`;
-    
+
     if (args.length > 0) {
-      const data = args.map(a => 
-        typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)
-      ).join(' ');
+      const data = args.map((a) => this.serialize(a)).join(' ');
       this.getChannel().appendLine(`${formatted}\n${data}`);
     } else {
       this.getChannel().appendLine(formatted);
     }
-    
-    // Also log to console in dev
-    if (process.env.NODE_ENV !== 'production') {
+
+    // Mirror to the developer console only when explicitly requested.
+    if (process.env.NODE_ENV === 'development') {
       console.log(formatted, ...args);
     }
   }
 
   show(): void {
     this.getChannel().show();
+  }
+
+  dispose(): void {
+    this.channel?.dispose();
+    this.channel = null;
+  }
+
+  private serialize(value: unknown): string {
+    if (value instanceof Error) {
+      return value.stack ?? value.message;
+    }
+    if (typeof value !== 'object' || value === null) {
+      return String(value);
+    }
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
   }
 }
 

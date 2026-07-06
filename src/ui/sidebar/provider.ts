@@ -1,46 +1,59 @@
 /**
- * Goly Sidebar - TreeView Provider
- * 
- * Main cockpit view showing all worktrees with live status.
- * Format: ● feature/payment  ↑2 ↓1  ~12  :3001  🤖
+ * Tree view showing worktrees and their live activity.
  */
 
 import * as vscode from 'vscode';
-import { WorktreeInfo, WorktreeService } from '../../worktrees/service.js';
-import { ProcessInspector } from '../../ports/inspector.js';
+import { getConfig, onConfigChange } from '../../core/config.js';
 import { logger } from '../../core/logger.js';
-import { withTimeout } from '../../core/types.js';
+import { ProcessInspector } from '../../ports/inspector.js';
+import type { WorktreeInfo, WorktreeService } from '../../worktrees/service.js';
 
-export class GolyTreeProvider implements vscode.TreeDataProvider<TreeItem> {
-  private _onDidChangeTreeData = new vscode.EventEmitter<TreeItem | undefined | void>();
-  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
-  
-  private worktrees: WorktreeInfo[] = [];
-  private processInspector = new ProcessInspector();
+export class GolyTreeProvider
+  implements vscode.TreeDataProvider<TreeItem>, vscode.Disposable
+{
+  private readonly changeEmitter = new vscode.EventEmitter<
+    TreeItem | undefined | void
+  >();
+  private readonly processInspector = new ProcessInspector();
+  private readonly subscriptions: vscode.Disposable[] = [];
+  private scanTimer: NodeJS.Timeout | null = null;
+  private worktrees: WorktreeInfo[];
   private refreshing = false;
+  private scanning = false;
 
-  constructor(private worktreeService: WorktreeService) {
-    // Subscribe to worktree updates
-    this.worktreeService.on('worktree:updated', (wt) => {
-      const index = this.worktrees.findIndex(w => w.id === wt.id);
-      if (index >= 0) {
-        this.worktrees[index] = wt;
-      }
-      this._onDidChangeTreeData.fire();
-    });
+  readonly onDidChangeTreeData = this.changeEmitter.event;
 
-    this.worktreeService.on('worktree:created', (wt) => {
-      this.worktrees.push(wt);
-      this._onDidChangeTreeData.fire();
-    });
+  constructor(private readonly worktreeService: WorktreeService) {
+    this.worktrees = worktreeService.getAll();
+    this.subscriptions.push(
+      this.worktreeService.on('worktree:updated', (worktree) => {
+        const index = this.worktrees.findIndex(
+          (candidate) => candidate.id === worktree.id,
+        );
+        if (index >= 0) {
+          this.worktrees[index] = worktree;
+        } else {
+          this.worktrees.push(worktree);
+        }
+        this.changeEmitter.fire();
+      }),
+      this.worktreeService.on('worktree:created', (worktree) => {
+        if (!this.worktrees.some((candidate) => candidate.id === worktree.id)) {
+          this.worktrees.push(worktree);
+        }
+        this.changeEmitter.fire();
+      }),
+      this.worktreeService.on('worktree:removed', (worktreePath) => {
+        this.worktrees = this.worktrees.filter(
+          (worktree) => worktree.path !== worktreePath,
+        );
+        this.changeEmitter.fire();
+      }),
+      onConfigChange(() => this.scheduleBackgroundScan()),
+    );
 
-    this.worktreeService.on('worktree:removed', (path) => {
-      this.worktrees = this.worktrees.filter(w => w.path !== path);
-      this._onDidChangeTreeData.fire();
-    });
-
-    // Start process/port scanning
-    this.startBackgroundScan();
+    this.scheduleBackgroundScan();
+    void this.scanActivity();
   }
 
   getTreeItem(element: TreeItem): vscode.TreeItem {
@@ -49,258 +62,284 @@ export class GolyTreeProvider implements vscode.TreeDataProvider<TreeItem> {
 
   async getChildren(element?: TreeItem): Promise<TreeItem[]> {
     if (!element) {
-      // Root level - list worktrees
-      const result = await this.worktreeService.list();
-      if (!result.ok) {
-        return [new TreeItem('No git repository', vscode.TreeItemCollapsibleState.None)];
-      }
-      this.worktrees = result.value;
-      
-      // Scan for processes and ports
-      await this.scanActivity();
-      
+      this.worktrees = this.worktreeService.getAll();
       if (this.worktrees.length === 0) {
-        return [new TreeItem(
-          'No worktrees. Run "Goly: Create Worktree" to get started.',
-          vscode.TreeItemCollapsibleState.None
-        )];
+        return [
+          new TreeItem(
+            'No worktrees found',
+            vscode.TreeItemCollapsibleState.None,
+            'empty',
+          ),
+        ];
       }
-      
-      return this.worktrees.map(wt => this.createWorktreeItem(wt));
+      return this.worktrees.map((worktree) =>
+        this.createWorktreeItem(worktree),
+      );
     }
 
-    if (element.contextValue === 'worktree') {
-      return this.createWorktreeDetailItems(element.worktree!);
+    if (
+      (element.contextValue === 'worktree' ||
+        element.contextValue === 'mainWorktree') &&
+      element.worktree
+    ) {
+      return this.createWorktreeDetailItems(element.worktree);
     }
-
     return [];
   }
 
-  refresh(): void {
-    if (this.refreshing) return;
+  async refresh(): Promise<void> {
+    if (this.refreshing) {
+      return;
+    }
     this.refreshing = true;
-    
-    this.worktreeService.refresh().finally(() => {
+    try {
+      const result = await this.worktreeService.refresh();
+      if (!result.ok) {
+        throw result.error;
+      }
+      this.worktrees = this.worktreeService.getAll();
+      await this.scanActivity();
+    } catch (error) {
+      logger.error('Could not refresh Goly view', error);
+      throw error;
+    } finally {
       this.refreshing = false;
-      this._onDidChangeTreeData.fire();
-    });
+      this.changeEmitter.fire();
+    }
   }
 
-  private createWorktreeItem(wt: WorktreeInfo): TreeItem {
-    const label = this.formatWorktreeLabel(wt);
-    const item = new TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed, 'worktree');
-    item.worktree = wt;
-    item.iconPath = this.getStatusIcon(wt);
-    item.tooltip = this.formatTooltip(wt);
-    item.contextValue = 'worktree';
-    
-    // Add inline actions
-    item.commands = [
-      {
-        command: 'goly.open',
-        title: 'Open',
-        arguments: [wt],
-      },
-      {
-        command: 'goly.terminal',
-        title: 'Terminal',
-        arguments: [wt],
-      },
-    ];
+  dispose(): void {
+    if (this.scanTimer) {
+      clearTimeout(this.scanTimer);
+      this.scanTimer = null;
+    }
+    for (const subscription of this.subscriptions) {
+      subscription.dispose();
+    }
+    this.changeEmitter.dispose();
+  }
 
+  private createWorktreeItem(worktree: WorktreeInfo): TreeItem {
+    const item = new TreeItem(
+      this.formatWorktreeLabel(worktree),
+      vscode.TreeItemCollapsibleState.Collapsed,
+      worktree.isMain ? 'mainWorktree' : 'worktree',
+    );
+    item.worktree = worktree;
+    item.iconPath = this.getStatusIcon(worktree);
+    item.tooltip = this.formatTooltip(worktree);
     return item;
   }
 
-  private createWorktreeDetailItems(wt: WorktreeInfo): TreeItem[] {
-    const items: TreeItem[] = [];
-
-    // Branch
-    items.push(new TreeItem(
-      `$(git-branch) ${wt.branch}`,
-      vscode.TreeItemCollapsibleState.None,
-      'info'
-    ));
-
-    // Status
+  private createWorktreeDetailItems(worktree: WorktreeInfo): TreeItem[] {
+    const items = [
+      new TreeItem(
+        `$(git-branch) ${worktree.branch}`,
+        vscode.TreeItemCollapsibleState.None,
+        'worktreeInfo',
+      ),
+    ];
     const statusParts: string[] = [];
-    if (wt.status.ahead > 0) statusParts.push(`↑${wt.status.ahead}`);
-    if (wt.status.behind > 0) statusParts.push(`↓${wt.status.behind}`);
-    if (wt.status.modified.length > 0) statusParts.push(`~${wt.status.modified.length}`);
-    if (wt.status.untracked.length > 0) statusParts.push(`?${wt.status.untracked.length}`);
-    
+    if (worktree.status.ahead > 0) {
+      statusParts.push(`↑${worktree.status.ahead}`);
+    }
+    if (worktree.status.behind > 0) {
+      statusParts.push(`↓${worktree.status.behind}`);
+    }
+    if (worktree.status.modified.length > 0) {
+      statusParts.push(`~${worktree.status.modified.length}`);
+    }
+    if (worktree.status.staged.length > 0) {
+      statusParts.push(`+${worktree.status.staged.length}`);
+    }
+    if (worktree.status.untracked.length > 0) {
+      statusParts.push(`?${worktree.status.untracked.length}`);
+    }
     if (statusParts.length > 0) {
-      items.push(new TreeItem(
-        `$(diff) ${statusParts.join(' ')}`,
-        vscode.TreeItemCollapsibleState.None,
-        'info'
-      ));
+      items.push(
+        new TreeItem(
+          `$(diff) ${statusParts.join(' ')}`,
+          vscode.TreeItemCollapsibleState.None,
+          'worktreeInfo',
+        ),
+      );
     }
 
-    // Path
-    items.push(new TreeItem(
-      `$(folder) ${wt.path}`,
-      vscode.TreeItemCollapsibleState.None,
-      'info'
-    ));
-
-    // Ports
-    if (wt.ports.length > 0) {
-      items.push(new TreeItem(
-        `$(port) ${wt.ports.map(p => `:${p}`).join(' ')}`,
+    items.push(
+      new TreeItem(
+        `$(folder) ${worktree.path}`,
         vscode.TreeItemCollapsibleState.None,
-        'info'
-      ));
-    }
+        'worktreeInfo',
+      ),
+    );
 
-    // Agent
-    if (wt.hasAgent && wt.agentName) {
-      items.push(new TreeItem(
-        `🤖 ${wt.agentName}`,
+    if (worktree.ports.length > 0) {
+      items.push(
+        new TreeItem(
+          `$(radio-tower) ${worktree.ports.map((port) => `:${port}`).join(' ')}`,
+          vscode.TreeItemCollapsibleState.None,
+          'worktreeInfo',
+        ),
+      );
+    }
+    if (worktree.hasAgent && worktree.agentName) {
+      items.push(
+        new TreeItem(
+          `$(hubot) ${worktree.agentName}`,
+          vscode.TreeItemCollapsibleState.None,
+          'worktreeInfo',
+        ),
+      );
+    }
+    for (const process of worktree.processes.slice(0, 5)) {
+      items.push(
+        new TreeItem(
+          `$(gear) ${process.name}${process.port ? `:${process.port}` : ''}`,
+          vscode.TreeItemCollapsibleState.None,
+          'worktreeProcess',
+        ),
+      );
+    }
+    items.push(
+      new TreeItem(
+        `$(clock) ${this.formatTimeAgo(worktree.lastActivity)}`,
         vscode.TreeItemCollapsibleState.None,
-        'info'
-      ));
-    }
-
-    // Processes
-    for (const proc of wt.processes.slice(0, 5)) {
-      items.push(new TreeItem(
-        `$(gear) ${proc.name}${proc.port ? `:${proc.port}` : ''}`,
-        vscode.TreeItemCollapsibleState.None,
-        'process'
-      ));
-    }
-
-    // Last activity
-    const ago = this.formatTimeAgo(wt.lastActivity);
-    items.push(new TreeItem(
-      `$(clock) ${ago}`,
-      vscode.TreeItemCollapsibleState.None,
-      'info'
-    ));
-
+        'worktreeInfo',
+      ),
+    );
     return items;
   }
 
-  private formatWorktreeLabel(wt: WorktreeInfo): string {
-    const parts: string[] = [wt.name];
-    
-    // Branch indicator
-    if (!wt.isMain) {
-      parts.push(`(${wt.branch})`);
+  private formatWorktreeLabel(worktree: WorktreeInfo): string {
+    const parts = [worktree.name];
+    if (!worktree.isMain) {
+      parts.push(`(${worktree.branch})`);
     }
-    
-    // Ahead/behind
-    if (wt.status.ahead > 0 || wt.status.behind > 0) {
-      const ahead = wt.status.ahead > 0 ? `↑${wt.status.ahead}` : '';
-      const behind = wt.status.behind > 0 ? `↓${wt.status.behind}` : '';
-      parts.push(`${ahead}${behind}`);
+    if (worktree.status.ahead > 0 || worktree.status.behind > 0) {
+      parts.push(
+        `${worktree.status.ahead > 0 ? `↑${worktree.status.ahead}` : ''}` +
+          `${worktree.status.behind > 0 ? `↓${worktree.status.behind}` : ''}`,
+      );
     }
-    
-    // Modified count
-    const total = wt.status.modified.length + wt.status.staged.length + wt.status.untracked.length;
-    if (total > 0) {
-      parts.push(`~${total}`);
+
+    const changedFiles = new Set([
+      ...worktree.status.modified,
+      ...worktree.status.staged,
+      ...worktree.status.untracked,
+    ]);
+    if (changedFiles.size > 0) {
+      parts.push(`~${changedFiles.size}`);
     }
-    
-    // Port
-    if (wt.ports.length > 0) {
-      parts.push(`:${wt.ports[0]}`);
+    if (worktree.ports.length > 0) {
+      parts.push(`:${worktree.ports[0]}`);
     }
-    
-    // Agent badge
-    if (wt.hasAgent) {
-      parts.push('🤖');
+    if (worktree.hasAgent) {
+      parts.push('$(hubot)');
     }
-    
     return parts.join(' ');
   }
 
-  private formatTooltip(wt: WorktreeInfo): string {
+  private formatTooltip(worktree: WorktreeInfo): string {
     const lines = [
-      `**${wt.name}**`,
-      `Branch: ${wt.branch}`,
-      `Path: ${wt.path}`,
-      '',
+      worktree.name,
+      `Branch: ${worktree.branch}`,
+      `Path: ${worktree.path}`,
     ];
-
-    if (!wt.status.isClean) {
-      if (wt.status.modified.length > 0) lines.push(`${wt.status.modified.length} modified`);
-      if (wt.status.staged.length > 0) lines.push(`${wt.status.staged.length} staged`);
-      if (wt.status.untracked.length > 0) lines.push(`${wt.status.untracked.length} untracked`);
+    if (!worktree.status.isClean) {
+      lines.push(
+        `${worktree.status.modified.length} modified`,
+        `${worktree.status.staged.length} staged`,
+        `${worktree.status.untracked.length} untracked`,
+      );
     }
-
-    if (wt.ports.length > 0) {
-      lines.push(`Ports: ${wt.ports.join(', ')}`);
+    if (worktree.ports.length > 0) {
+      lines.push(`Ports: ${worktree.ports.join(', ')}`);
     }
-
-    if (wt.hasAgent && wt.agentName) {
-      lines.push(`Agent: ${wt.agentName}`);
+    if (worktree.agentName) {
+      lines.push(`Agent: ${worktree.agentName}`);
     }
-
     return lines.join('\n');
   }
 
-  private getStatusIcon(wt: WorktreeInfo): vscode.ThemeIcon {
-    if (wt.isMain) {
+  private getStatusIcon(worktree: WorktreeInfo): vscode.ThemeIcon {
+    if (worktree.isMain) {
       return new vscode.ThemeIcon('home');
     }
-    if (!wt.status.isClean) {
-      return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('editorGutter.modifiedBackground'));
+    if (!worktree.status.isClean) {
+      return new vscode.ThemeIcon(
+        'circle-filled',
+        new vscode.ThemeColor('gitDecoration.modifiedResourceForeground'),
+      );
     }
-    return new vscode.ThemeIcon('circle', new vscode.ThemeColor('testing.icon.passed'));
+    return new vscode.ThemeIcon(
+      'circle-outline',
+      new vscode.ThemeColor('testing.iconPassed'),
+    );
   }
 
   private formatTimeAgo(timestamp: number): string {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    
-    if (seconds < 60) return 'just now';
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-    return `${Math.floor(seconds / 86400)}d ago`;
+    const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1_000));
+    if (seconds < 60) {
+      return 'just now';
+    }
+    if (seconds < 3_600) {
+      return `${Math.floor(seconds / 60)}m ago`;
+    }
+    if (seconds < 86_400) {
+      return `${Math.floor(seconds / 3_600)}h ago`;
+    }
+    return `${Math.floor(seconds / 86_400)}d ago`;
   }
 
   private async scanActivity(): Promise<void> {
-    for (const wt of this.worktrees) {
-      try {
-        const ports = await withTimeout(
-          this.processInspector.getPortsForPath(wt.path),
-          1000,
-          []
-        );
-        
-        const processes = await withTimeout(
-          this.processInspector.getProcessesForPath(wt.path),
-          1000,
-          []
-        );
-        
-        const agent = await withTimeout(
-          this.processInspector.detectAgent(wt.path),
-          1000,
-          { hasAgent: false }
-        );
-        
+    if (this.scanning || this.worktrees.length === 0) {
+      return;
+    }
+    this.scanning = true;
+    try {
+      const activities = await this.processInspector.inspectPaths(
+        this.worktrees.map((worktree) => worktree.path),
+      );
+      for (const worktree of this.worktrees) {
+        const activity = activities.get(worktree.path);
+        if (!activity) {
+          continue;
+        }
         this.worktreeService.updateActivity(
-          wt.path,
-          ports,
-          processes,
-          agent.hasAgent,
-          agent.agentName
+          worktree.path,
+          activity.ports,
+          activity.processes,
+          activity.hasAgent,
+          activity.agentName,
         );
-      } catch (e) {
-        logger.debug(`Failed to scan activity for ${wt.path}`, e);
       }
+    } catch (error) {
+      logger.debug('Could not scan worktree activity', error);
+    } finally {
+      this.scanning = false;
     }
   }
 
-  private startBackgroundScan(): void {
-    // Scan every 10 seconds
-    setInterval(async () => {
-      if (this.worktrees.length > 0) {
-        await this.scanActivity();
-        this._onDidChangeTreeData.fire();
-      }
-    }, 10000);
+  private scheduleBackgroundScan(): void {
+    if (this.scanTimer) {
+      clearTimeout(this.scanTimer);
+    }
+    const config = getConfig();
+    if (!config.autoRefresh || config.refreshInterval <= 0) {
+      this.scanTimer = null;
+      return;
+    }
+
+    const interval = Math.max(5_000, config.refreshInterval);
+    this.scanTimer = setTimeout(() => {
+      void this.runBackgroundScan();
+    }, interval);
+  }
+
+  private async runBackgroundScan(): Promise<void> {
+    await this.scanActivity();
+    this.changeEmitter.fire();
+    this.scheduleBackgroundScan();
   }
 }
 
@@ -310,7 +349,7 @@ export class TreeItem extends vscode.TreeItem {
   constructor(
     label: string,
     collapsibleState: vscode.TreeItemCollapsibleState,
-    contextValue: string
+    contextValue: string,
   ) {
     super(label, collapsibleState);
     this.contextValue = contextValue;
