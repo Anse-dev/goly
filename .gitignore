@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Logs
+*.log
+logs/
+
+# IDE
+.vscode-test/
+.vscode-test-web/
+*.vsix
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Environment
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.temp

@@ -1,0 +1,259 @@
+{
+  "name": "goly",
+  "displayName": "Goly — Parallel Workspaces & Worktree Cockpit",
+  "description": "The cockpit for parallel development sessions. Monitor worktrees, ports, processes, and agents in real-time. Native in VS Code.",
+  "version": "1.0.0",
+  "publisher": "goly-dev",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other",
+    "Git"
+  ],
+  "keywords": [
+    "worktree",
+    "parallel",
+    "branches",
+    "claude code",
+    "agents",
+    "review",
+    "multi-branch",
+    "workspace",
+    "development"
+  ],
+  "activationEvents": [
+    "onView:goly.sidebar",
+    "onCommand:goly.refresh",
+    "onCommand:goly.create",
+    "onCommand:goly.review",
+    "onCommand:goly.snapshot",
+    "workspaceContains:.git"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "goly.refresh",
+        "title": "Goly: Refresh",
+        "category": "Goly",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "goly.create",
+        "title": "Goly: Create Worktree",
+        "category": "Goly",
+        "icon": "$(add)"
+      },
+      {
+        "command": "goly.remove",
+        "title": "Goly: Remove Worktree",
+        "category": "Goly",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "goly.open",
+        "title": "Goly: Open in New Window",
+        "category": "Goly",
+        "icon": "$(window)"
+      },
+      {
+        "command": "goly.terminal",
+        "title": "Goly: Open Terminal Here",
+        "category": "Goly",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "goly.snapshot",
+        "title": "Goly: Save Snapshot",
+        "category": "Goly",
+        "icon": "$(save)"
+      },
+      {
+        "command": "goly.restoreSnapshot",
+        "title": "Goly: Restore Snapshot",
+        "category": "Goly",
+        "icon": "$(restore)"
+      },
+      {
+        "command": "goly.review",
+        "title": "Goly: Review Branch/PR",
+        "category": "Goly",
+        "icon": "$(git-pull-request)"
+      },
+      {
+        "command": "goly.copyEnv",
+        "title": "Goly: Copy Environment Files",
+        "category": "Goly",
+        "icon": "$(files)"
+      },
+      {
+        "command": "goly.compare",
+        "title": "Goly: Compare with Main",
+        "category": "Goly",
+        "icon": "$(diff)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "goly.sidebar",
+          "name": "Goly",
+          "icon": "$(layers)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "goly.sidebar",
+        "contents": "No Git repository detected.\n\n[Open a folder with a Git repository](command:vscode.openFolder)\n\nor\n\n[Initialize Git](command:git.init)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "goly.refresh",
+          "when": "view == goly.sidebar",
+          "group": "navigation"
+        },
+        {
+          "command": "goly.create",
+          "when": "view == goly.sidebar",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "goly.open",
+          "when": "view == goly.sidebar",
+          "group": "inline"
+        },
+        {
+          "command": "goly.terminal",
+          "when": "view == goly.sidebar"
+        },
+        {
+          "command": "goly.snapshot",
+          "when": "view == goly.sidebar"
+        },
+        {
+          "command": "goly.compare",
+          "when": "view == goly.sidebar"
+        },
+        {
+          "command": "goly.copyEnv",
+          "when": "view == goly.sidebar"
+        },
+        {
+          "command": "goly.remove",
+          "when": "view == goly.sidebar"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "goly.refresh",
+        "key": "ctrl+shift+g r",
+        "mac": "cmd+shift+g r",
+        "when": "gitRepositoryExists"
+      },
+      {
+        "command": "goly.create",
+        "key": "ctrl+shift+g n",
+        "mac": "cmd+shift+g n",
+        "when": "gitRepositoryExists"
+      }
+    ],
+    "configuration": {
+      "title": "Goly",
+      "properties": {
+        "goly.baseDirectory": {
+          "type": "string",
+          "default": "~/workspaces",
+          "description": "Default directory for new worktrees"
+        },
+        "goly.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto refresh sidebar on file system changes"
+        },
+        "goly.refreshInterval": {
+          "type": "number",
+          "default": 5000,
+          "description": "Auto refresh interval in milliseconds (0 to disable)"
+        },
+        "goly.autoOpenInNewWindow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open new worktree in a new VS Code window"
+        },
+        "goly.confirmBeforeDelete": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show confirmation before deleting worktree"
+        },
+        "goly.confirmBeforeDeleteBranch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show confirmation before deleting branch with worktree"
+        },
+        "goly.portRangeStart": {
+          "type": "number",
+          "default": 3000,
+          "description": "Starting port for auto-assigned development servers"
+        },
+        "goly.envFilePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [".env.local", ".env.*.local", "*.env"],
+          "description": "File patterns to copy to new worktrees"
+        },
+        "goly.postCreateCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": ["npm install"],
+          "description": "Commands to run after creating a worktree"
+        },
+        "goly.maxWorktreesFree": {
+          "type": "number",
+          "default": 5,
+          "description": "Maximum worktrees in free tier"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build:extension && npm run build:webview",
+    "build:extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --platform=node --external:vscode --external:esbuild",
+    "build:webview": "esbuild src/ui/dashboard/index.tsx --bundle --outfile=dist/webview.js --loader:.tsx=tsx --loader:.ts=ts --define:process.env.NODE_ENV=\\\"production\\\"",
+    "watch": "npm run build:extension -- --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write \"src/**/*.ts\" \"src/**/*.tsx\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.100.0",
+    "@types/mocha": "^10.0.7",
+    "@vscode/test-electron": "^2.3.10",
+    "@vitest/coverage-v8": "^1.6.0",
+    "esbuild": "^0.21.5",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0",
+    "prettier": "^3.3.2",
+    "@typescript-eslint/eslint-plugin": "^7.13.0",
+    "@typescript-eslint/parser": "^7.13.0"
+  },
+  "dependencies": {
+    "zustand": "^4.5.4"
+  }
+}
