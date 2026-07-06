@@ -2,7 +2,7 @@
  * Port and Process Inspector - Cross-platform implementation
  * 
  * Detects listening ports and running processes by worktree directory.
- * Uses platform-specific commands (lsof on mac/linux, netstat on windows).
+ * Uses platform-specific commands (lsof on mac/linux, netstat on windows) .
  */
 
 import { exec } from 'child_process';
