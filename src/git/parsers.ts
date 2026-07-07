@@ -17,7 +17,7 @@ export function parseWorktreeList(output: string): Worktree[] {
 
     for (const line of entry.split('\n')) {
       if (line.startsWith('worktree ')) {
-        worktreePath = path.normalize(line.slice('worktree '.length));
+        worktreePath = normalizeGitPath(line.slice('worktree '.length));
       } else if (line.startsWith('HEAD ')) {
         head = line.slice('HEAD '.length);
       } else if (line.startsWith('branch ')) {
@@ -118,6 +118,12 @@ export function parseStatus(output: string, currentBranch: string): StatusInfo {
     ahead,
     behind,
   };
+}
+
+function normalizeGitPath(gitPath: string): string {
+  // Only normalize Windows-style absolute paths (e.g. C:/Users/...).
+  // Leaving Unix paths unchanged avoids mangling them on Windows.
+  return /^[A-Za-z]:[\\/]/.test(gitPath) ? path.normalize(gitPath) : gitPath;
 }
 
 export function parseBranchList(output: string): BranchInfo[] {

@@ -85,7 +85,9 @@ export class GitClient {
 
   async getRepositoryRoot(): Promise<Result<string>> {
     const result = await this.run(['rev-parse', '--show-toplevel']);
-    return result.ok ? ok(path.normalize(result.value.trim())) : result;
+    if (!result.ok) return result;
+    const raw = result.value.trim();
+    return ok(/^[A-Za-z]:[\\/]/.test(raw) ? path.normalize(raw) : raw);
   }
 
   async getCurrentBranch(): Promise<Result<string>> {
