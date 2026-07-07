@@ -2,7 +2,7 @@
   "name": "goly",
   "displayName": "Goly — Git Worktree Manager",
   "description": "Run Git branches side by side. Manage worktrees, spot port conflicts, track coding agents, review changes, and restore context.",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "publisher": "goly-dev",
   "icon": "media/logo.png",
   "repository": "https://github.com/Anse-dev/goly",
