@@ -1,8 +1,8 @@
 ![Goly — Git worktree mission control](media/banner.png)
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=goly-dev.goly"><img src="https://img.shields.io/visual-studio-marketplace/v/goly-dev.goly?style=flat-square&label=Marketplace&color=C6FF3D&labelColor=11151A" alt="Marketplace version"></a>
-  <a href="https://marketplace.visualstudio.com/items?itemName=goly-dev.goly"><img src="https://img.shields.io/visual-studio-marketplace/i/goly-dev.goly?style=flat-square&label=Installs&color=54D6FF&labelColor=11151A" alt="Installs"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=anse-dev.goly-worktree"><img src="https://img.shields.io/visual-studio-marketplace/v/anse-dev.goly-worktree?style=flat-square&label=Marketplace&color=C6FF3D&labelColor=11151A" alt="Marketplace version"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=anse-dev.goly-worktree"><img src="https://img.shields.io/visual-studio-marketplace/i/anse-dev.goly-worktree?style=flat-square&label=Installs&color=54D6FF&labelColor=11151A" alt="Installs"></a>
   <a href="https://github.com/Anse-dev/goly"><img src="https://img.shields.io/github/stars/Anse-dev/goly?style=flat-square&label=Stars&color=FFB454&labelColor=11151A" alt="GitHub stars"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-E8EDF2?style=flat-square&labelColor=11151A" alt="MIT license"></a>
 </p>
@@ -12,7 +12,7 @@
 Goly turns Git worktrees into a focused mission-control view inside VS Code. Create parallel workspaces, see what is running in each one, isolate reviews, and return to the right coding context without branch-switching gymnastics.
 
 <p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=goly-dev.goly"><strong>Install from the VS Code Marketplace →</strong></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=anse-dev.goly-worktree"><strong>Install from the VS Code Marketplace →</strong></a>
 </p>
 
 ## Your repository is parallel. Your tools should be too.
@@ -21,10 +21,10 @@ Modern development rarely happens on one branch at a time. A feature is in progr
 
 Goly keeps those lanes visible:
 
-```text
-● main                 ↑2  ~3   :3000
-● feature/payments         ~8   :3001  ◈ Agent
-● review/pr-152                  :4173  ◈ Agent
+```
+● main               ↑2 ~3  :3000
+● feature/payments      ~8  :3001  ◈ Agent
+● review/pr-152             :4173  ◈ Agent
 ```
 
 No hidden terminals. No mystery ports. No “which folder was that agent using?” moment.
@@ -62,7 +62,7 @@ Fetch ref → isolated review branch → new window → review → cleanup
 
 ## Get started in 30 seconds
 
-1. Install **Goly** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=goly-dev.goly).
+1. Install **Goly** from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=anse-dev.goly-worktree).
 2. Open a Git repository.
 3. Select the **Goly** icon in the Activity Bar.
 4. Click **+** to create a worktree, or right-click an existing one for actions.
