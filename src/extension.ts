@@ -168,7 +168,7 @@ function registerCommands(
           deleteBranch = choice === 'Delete Worktree + Branch';
         }
 
-        const result = await service.remove(selected.path, deleteBranch);
+        const result = await service.remove(selected.path, deleteBranch, deleteBranch);
         if (!result.ok) {
           await vscode.window.showErrorMessage(
             `Removal failed: ${result.error.message}`,

@@ -1,42 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#6366F1"/>
-      <stop offset="100%" style="stop-color:#8B5CF6"/>
-    </linearGradient>
-  </defs>
-  
-  <!-- Background circle -->
-  <circle cx="64" cy="64" r="60" fill="url(#bg)"/>
-  
-  <!-- Parallel layers (worktrees) -->
-  <g fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round">
-    <!-- Layer 1 (back) -->
-    <rect x="28" y="36" width="72" height="56" rx="6" opacity="0.5"/>
-    
-    <!-- Layer 2 (middle) -->
-    <rect x="32" y="32" width="72" height="56" rx="6" opacity="0.7"/>
-    
-    <!-- Layer 3 (front) -->
-    <rect x="36" y="28" width="72" height="56" rx="6"/>
-  </g>
-  
-  <!-- Branch indicators -->
-  <g fill="#fff">
-    <circle cx="48" cy="44" r="4"/>
-    <circle cx="64" cy="52" r="4"/>
-    <circle cx="80" cy="44" r="4"/>
-    <circle cx="72" cy="68" r="4"/>
-  </g>
-  
-  <!-- Connecting lines -->
-  <g stroke="#fff" stroke-width="2" stroke-linecap="round" opacity="0.7">
-    <line x1="48" y1="44" x2="64" y2="52"/>
-    <line x1="64" y1="52" x2="80" y2="44"/>
-    <line x1="64" y1="52" x2="72" y2="68"/>
-  </g>
-  
-  <!-- Activity indicator -->
-  <circle cx="96" cy="32" r="8" fill="#10B981"/>
-  <circle cx="96" cy="32" r="4" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="13" width="14" height="9" rx="2" opacity="0.4"/>
+  <rect x="4" y="8" width="14" height="9" rx="2" opacity="0.65"/>
+  <rect x="6" y="3" width="14" height="9" rx="2"/>
 </svg>
