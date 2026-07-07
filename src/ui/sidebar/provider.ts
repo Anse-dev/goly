@@ -132,90 +132,54 @@ export class GolyTreeProvider
   }
 
   private createWorktreeDetailItems(worktree: WorktreeInfo): TreeItem[] {
-    const items = [
-      new TreeItem(
-        `$(git-branch) ${worktree.branch}`,
+    const item = (
+      label: string,
+      icon: string,
+      context = 'worktreeInfo',
+    ): TreeItem => {
+      const treeItem = new TreeItem(
+        label,
         vscode.TreeItemCollapsibleState.None,
-        'worktreeInfo',
-      ),
-    ];
+        context,
+      );
+      treeItem.iconPath = new vscode.ThemeIcon(icon);
+      return treeItem;
+    };
+
+    const items: TreeItem[] = [item(worktree.branch, 'git-branch')];
+
     if (worktree.status.statusError) {
-      items.push(
-        new TreeItem(
-          `$(warning) Git status unavailable`,
-          vscode.TreeItemCollapsibleState.None,
-          'worktreeInfo',
-        ),
-      );
-    }
-    const statusParts: string[] = [];
-    if (worktree.status.ahead > 0) {
-      statusParts.push(`↑${worktree.status.ahead}`);
-    }
-    if (worktree.status.behind > 0) {
-      statusParts.push(`↓${worktree.status.behind}`);
-    }
-    if (worktree.status.modified.length > 0) {
-      statusParts.push(`~${worktree.status.modified.length}`);
-    }
-    if (worktree.status.staged.length > 0) {
-      statusParts.push(`+${worktree.status.staged.length}`);
-    }
-    if (worktree.status.untracked.length > 0) {
-      statusParts.push(`?${worktree.status.untracked.length}`);
-    }
-    if (statusParts.length > 0) {
-      items.push(
-        new TreeItem(
-          `$(diff) ${statusParts.join(' ')}`,
-          vscode.TreeItemCollapsibleState.None,
-          'worktreeInfo',
-        ),
-      );
+      items.push(item('Git status unavailable', 'warning'));
     }
 
-    items.push(
-      new TreeItem(
-        `$(folder) ${worktree.path}`,
-        vscode.TreeItemCollapsibleState.None,
-        'worktreeInfo',
-      ),
-    );
+    const statusParts: string[] = [];
+    if (worktree.status.ahead > 0) statusParts.push(`↑${worktree.status.ahead}`);
+    if (worktree.status.behind > 0) statusParts.push(`↓${worktree.status.behind}`);
+    if (worktree.status.modified.length > 0) statusParts.push(`~${worktree.status.modified.length}`);
+    if (worktree.status.staged.length > 0) statusParts.push(`+${worktree.status.staged.length}`);
+    if (worktree.status.untracked.length > 0) statusParts.push(`?${worktree.status.untracked.length}`);
+    if (statusParts.length > 0) {
+      items.push(item(statusParts.join(' '), 'diff'));
+    }
+
+    items.push(item(worktree.path, 'folder'));
 
     if (worktree.ports.length > 0) {
-      items.push(
-        new TreeItem(
-          `$(radio-tower) ${worktree.ports.map((port) => `:${port}`).join(' ')}`,
-          vscode.TreeItemCollapsibleState.None,
-          'worktreeInfo',
-        ),
-      );
+      items.push(item(worktree.ports.map((port) => `:${port}`).join(' '), 'radio-tower'));
     }
     if (worktree.hasAgent && worktree.agentName) {
-      items.push(
-        new TreeItem(
-          `$(hubot) ${worktree.agentName}`,
-          vscode.TreeItemCollapsibleState.None,
-          'worktreeInfo',
-        ),
-      );
+      items.push(item(worktree.agentName, 'hubot'));
     }
     for (const process of worktree.processes.slice(0, 5)) {
       items.push(
-        new TreeItem(
-          `$(gear) ${process.name}${process.port ? `:${process.port}` : ''}`,
-          vscode.TreeItemCollapsibleState.None,
+        item(
+          `${process.name}${process.port ? `:${process.port}` : ''}`,
+          'gear',
           'worktreeProcess',
         ),
       );
     }
-    items.push(
-      new TreeItem(
-        `$(clock) ${this.formatTimeAgo(worktree.lastActivity)}`,
-        vscode.TreeItemCollapsibleState.None,
-        'worktreeInfo',
-      ),
-    );
+    items.push(item(this.formatTimeAgo(worktree.lastActivity), 'clock'));
     return items;
   }
 

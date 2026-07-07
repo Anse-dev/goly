@@ -10,7 +10,7 @@ import { expandTilde, toError } from './core/types.js';
 import { GitClient } from './git/client.js';
 import { ReviewService } from './review/service.js';
 import { SnapshotService } from './snapshots/service.js';
-import { GolyTreeProvider } from './ui/sidebar/provider.js';
+import { GolyTreeProvider, TreeItem } from './ui/sidebar/provider.js';
 import { WorktreeService } from './worktrees/service.js';
 import type { WorktreeInfo } from './worktrees/service.js';
 import { VscodeSessionStore } from './adapters/vscode-session-store.js';
@@ -138,9 +138,9 @@ function registerCommands(
 
     vscode.commands.registerCommand(
       'goly.remove',
-      async (worktree?: WorktreeInfo) => {
+      async (item?: unknown) => {
         const selected =
-          worktree ??
+          resolveWorktree(item) ??
           (await pickWorktree(
             service,
             'Select a worktree to remove',
@@ -183,9 +183,9 @@ function registerCommands(
 
     vscode.commands.registerCommand(
       'goly.open',
-      async (worktree?: WorktreeInfo) => {
+      async (item?: unknown) => {
         const selected =
-          worktree ??
+          resolveWorktree(item) ??
           (await pickWorktree(service, 'Select a worktree to open'));
         if (!selected) {
           return;
@@ -200,9 +200,9 @@ function registerCommands(
 
     vscode.commands.registerCommand(
       'goly.terminal',
-      async (worktree?: WorktreeInfo) => {
+      async (item?: unknown) => {
         const selected =
-          worktree ??
+          resolveWorktree(item) ??
           (await pickWorktree(service, 'Select a worktree for the terminal'));
         if (!selected) {
           return;
@@ -279,9 +279,9 @@ function registerCommands(
 
     vscode.commands.registerCommand(
       'goly.snapshot',
-      async (worktree?: WorktreeInfo) => {
+      async (item?: unknown) => {
         const selected =
-          worktree ??
+          resolveWorktree(item) ??
           (await pickWorktree(service, 'Select the worktree to snapshot'));
         if (!selected) {
           return;
@@ -340,9 +340,9 @@ function registerCommands(
 
     vscode.commands.registerCommand(
       'goly.copyEnv',
-      async (worktree?: WorktreeInfo) => {
+      async (item?: unknown) => {
         const selected =
-          worktree ??
+          resolveWorktree(item) ??
           (await pickWorktree(
             service,
             'Select the destination worktree',
@@ -364,9 +364,9 @@ function registerCommands(
 
     vscode.commands.registerCommand(
       'goly.compare',
-      async (worktree?: WorktreeInfo) => {
+      async (item?: unknown) => {
         const selected =
-          worktree ??
+          resolveWorktree(item) ??
           (await pickWorktree(
             service,
             'Select a worktree to compare',
@@ -564,6 +564,12 @@ function setupViewContext(context: vscode.ExtensionContext): void {
     service.on('worktree:removed', update),
   );
   update();
+}
+
+function resolveWorktree(item: unknown): WorktreeInfo | undefined {
+  if (!item) return undefined;
+  if (item instanceof TreeItem) return item.worktree;
+  return item as WorktreeInfo;
 }
 
 async function pickWorktree(
