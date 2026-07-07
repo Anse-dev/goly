@@ -7,6 +7,7 @@ import { promises as fs } from 'fs';
 import * as vscode from 'vscode';
 import { isPathInside, toError } from '../core/types.js';
 import { logger } from '../core/logger.js';
+import type { SessionStore } from '../ports/session-store.js';
 
 export interface Snapshot {
   id: string;
@@ -45,7 +46,7 @@ const STORAGE_KEY = 'goly.snapshots.v2';
 export class SnapshotService {
   private snapshots: Snapshot[] = [];
 
-  constructor(private readonly globalState: vscode.Memento) {
+  constructor(private readonly store: SessionStore) {
     this.load();
   }
 
@@ -338,15 +339,15 @@ export class SnapshotService {
 
   private load(): void {
     const stored =
-      this.globalState.get<unknown>(STORAGE_KEY) ??
-      this.globalState.get<unknown>('goly.snapshots.v1');
+      this.store.get<unknown>(STORAGE_KEY) ??
+      this.store.get<unknown>('goly.snapshots.v1');
     if (Array.isArray(stored)) {
       this.snapshots = stored.filter(isSnapshot).map(cloneSnapshot);
     }
   }
 
   private async persist(): Promise<void> {
-    await this.globalState.update(STORAGE_KEY, this.snapshots);
+    await this.store.update(STORAGE_KEY, this.snapshots);
   }
 }
 

@@ -7,6 +7,7 @@ import { platform } from 'os';
 import * as path from 'path';
 import { logger } from '../core/logger.js';
 import { isPathInside, toError } from '../core/types.js';
+import { identifyAgent } from '../domain/activity/agent-detector.js';
 
 const COMMAND_TIMEOUT_MS = 5_000;
 
@@ -39,14 +40,6 @@ interface CwdProcess {
   cwd?: string;
   command: string;
 }
-
-const AGENT_PATTERNS = [
-  { name: 'Claude Code', patterns: [/\bclaude\b/i] },
-  { name: 'Codex', patterns: [/\bcodex\b/i] },
-  { name: 'Cursor', patterns: [/\bcursor\b/i] },
-  { name: 'Windsurf', patterns: [/\bwindsurf\b/i, /\bcodeium\b/i] },
-  { name: 'Copilot', patterns: [/\bcopilot\b/i] },
-];
 
 export class ProcessInspector {
   private readonly currentPlatform = platform();
@@ -438,18 +431,6 @@ function findOwningWorktree(
     return sorted.find((worktreePath) =>
       command.includes(worktreePath.toLowerCase()),
     );
-  }
-  return undefined;
-}
-
-function identifyAgent(processes: readonly ProcessInfo[]): string | undefined {
-  for (const process of processes) {
-    const searchable = `${process.name} ${process.command}`;
-    for (const agent of AGENT_PATTERNS) {
-      if (agent.patterns.some((pattern) => pattern.test(searchable))) {
-        return agent.name;
-      }
-    }
   }
   return undefined;
 }

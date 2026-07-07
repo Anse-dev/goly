@@ -10,6 +10,11 @@ import {
   __setWarningMessageResult,
 } from './vscode.mock.js';
 import { WorktreeService } from '../worktrees/service.js';
+import { VscodeEditorNavigator } from '../adapters/vscode-editor-navigator.js';
+import { VscodeFileFinder } from '../adapters/vscode-file-finder.js';
+import { VscodeWorkspaceWatcher } from '../adapters/vscode-workspace-watcher.js';
+import { VscodeWorkspaceTrust } from '../adapters/vscode-workspace-trust.js';
+import { VscodeCommandConfirmation } from '../adapters/vscode-command-confirmation.js';
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -29,7 +34,13 @@ afterEach(async () => {
 describe('WorktreeService', () => {
   it('creates and removes a real worktree', async () => {
     const repository = await createRepository();
-    const service = new WorktreeService(repository);
+    const service = new WorktreeService(repository, {
+      watcher: new VscodeWorkspaceWatcher(),
+      fileFinder: new VscodeFileFinder(),
+      navigator: new VscodeEditorNavigator(),
+      workspaceTrust: new VscodeWorkspaceTrust(),
+      commandConfirmation: new VscodeCommandConfirmation(),
+    });
     const initialized = await service.init();
     expect(initialized.ok).toBe(true);
 
@@ -67,7 +78,13 @@ describe('WorktreeService', () => {
     __setWarningMessageResult(undefined);
 
     const repository = await createRepository();
-    const service = new WorktreeService(repository);
+    const service = new WorktreeService(repository, {
+      watcher: new VscodeWorkspaceWatcher(),
+      fileFinder: new VscodeFileFinder(),
+      navigator: new VscodeEditorNavigator(),
+      workspaceTrust: new VscodeWorkspaceTrust(),
+      commandConfirmation: new VscodeCommandConfirmation(),
+    });
     const initialized = await service.init();
     expect(initialized.ok).toBe(true);
 

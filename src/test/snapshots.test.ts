@@ -2,7 +2,6 @@ import { promises as fs } from 'fs';
 import { tmpdir } from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type * as vscode from 'vscode';
 import {
   __resetMock,
   debug,
@@ -15,6 +14,7 @@ import {
   window,
 } from './vscode.mock.js';
 import { SnapshotService } from '../snapshots/service.js';
+import type { SessionStore } from '../ports/session-store.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -88,7 +88,7 @@ describe('SnapshotService', () => {
       ),
     ];
 
-    const service = new SnapshotService(new MemoryMemento() as vscode.Memento);
+    const service = new SnapshotService(new MemoryMemento());
     const snapshot = await service.save('daily context', worktreePath, 'main');
 
     expect(snapshot.openFiles).toEqual([insideFile]);
@@ -110,7 +110,7 @@ describe('SnapshotService', () => {
   });
 });
 
-class MemoryMemento {
+class MemoryMemento implements SessionStore {
   private readonly values = new Map<string, unknown>();
 
   get<T>(key: string, defaultValue?: T): T | undefined {

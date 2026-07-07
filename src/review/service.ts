@@ -3,13 +3,14 @@
  */
 
 import * as path from 'path';
-import * as vscode from 'vscode';
 import { getConfig } from '../core/config.js';
 import { logger } from '../core/logger.js';
 import { expandTilde, err, ok, toError } from '../core/types.js';
 import type { Result } from '../core/types.js';
 import type { GitClient } from '../git/client.js';
 import type { WorktreeService } from '../worktrees/service.js';
+import type { SessionStore } from '../ports/session-store.js';
+import type { EditorNavigator } from '../ports/editor-navigator.js';
 
 export interface ReviewSession {
   id: string;
@@ -28,9 +29,10 @@ export class ReviewService {
   constructor(
     private readonly git: GitClient,
     private readonly worktreeService: WorktreeService,
-    private readonly globalState: vscode.Memento,
+    private readonly store: SessionStore,
+    private readonly navigator: EditorNavigator,
   ) {
-    const stored = this.globalState.get<unknown>(STORAGE_KEY);
+    const stored = this.store.get<unknown>(STORAGE_KEY);
     if (Array.isArray(stored)) {
       for (const candidate of stored) {
         if (isReviewSession(candidate)) {
@@ -111,11 +113,7 @@ export class ReviewService {
     await this.persist();
 
     try {
-      await vscode.commands.executeCommand(
-        'vscode.openFolder',
-        vscode.Uri.file(session.worktreePath),
-        { forceNewWindow: true },
-      );
+      await this.navigator.openFolderInNewWindow(session.worktreePath);
     } catch (error) {
       logger.warn(
         `Review created, but the window could not be opened: ${toError(error).message}`,
@@ -204,7 +202,7 @@ export class ReviewService {
   }
 
   private async persist(): Promise<void> {
-    await this.globalState.update(STORAGE_KEY, [...this.sessions.values()]);
+    await this.store.update(STORAGE_KEY, [...this.sessions.values()]);
   }
 }
 

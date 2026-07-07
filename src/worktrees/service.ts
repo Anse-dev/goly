@@ -5,7 +5,6 @@
 import { exec } from 'child_process';
 import { promises as fs } from 'fs';
 import * as path from 'path';
-import * as vscode from 'vscode';
 import { getConfig, onConfigChange } from '../core/config.js';
 import type { GolyConfig } from '../core/config.js';
 import {
@@ -22,6 +21,19 @@ import { logger } from '../core/logger.js';
 import { GitClient } from '../git/client.js';
 import type { StatusInfo } from '../git/client.js';
 import type { ProcessInfo } from '../ports/inspector.js';
+import type { EditorNavigator } from '../ports/editor-navigator.js';
+import type { FileFinder } from '../ports/file-finder.js';
+import type { WorkspaceWatcher } from '../ports/workspace-watcher.js';
+import type { WorkspaceTrust } from '../ports/workspace-trust.js';
+import type { CommandConfirmation } from '../ports/command-confirmation.js';
+
+export interface WorktreeServicePorts {
+  watcher: WorkspaceWatcher;
+  fileFinder: FileFinder;
+  navigator: EditorNavigator;
+  workspaceTrust: WorkspaceTrust;
+  commandConfirmation: CommandConfirmation;
+}
 
 export interface WorktreeInfo {
   id: string;
@@ -72,21 +84,24 @@ const STATUS_UNAVAILABLE = (branch: string, error: string): StatusInfo => ({
   statusError: error,
 });
 
-export class WorktreeService implements vscode.Disposable {
+export class WorktreeService {
   private readonly git: GitClient;
   private readonly eventBus = new EventBus<WorktreeEvents>((event, error) => {
     logger.error(`Worktree event handler failed (${String(event)})`, error);
   });
   private readonly refreshDebounced: (() => void) & { cancel(): void };
-  private readonly configSubscription: vscode.Disposable;
+  private readonly configSubscription: { dispose(): void };
   private worktrees = new Map<string, WorktreeInfo>();
-  private watcher: vscode.FileSystemWatcher | null = null;
+  private watcher: { dispose(): void } | null = null;
   private refreshTimer: NodeJS.Timeout | null = null;
   private refreshPromise: Promise<Result<void>> | null = null;
   private config: GolyConfig = getConfig();
   private repositoryRoot: string;
 
-  constructor(repoPath: string) {
+  constructor(
+    repoPath: string,
+    private readonly ports: WorktreeServicePorts,
+  ) {
     this.repositoryRoot = path.resolve(repoPath);
     this.git = new GitClient(this.repositoryRoot);
     this.refreshDebounced = debounce(() => {
@@ -248,11 +263,7 @@ export class WorktreeService implements vscode.Disposable {
     let opened = false;
     if (shouldOpen) {
       try {
-        await vscode.commands.executeCommand(
-          'vscode.openFolder',
-          vscode.Uri.file(canonicalPath),
-          { forceNewWindow: true },
-        );
+        await this.ports.navigator.openFolderInNewWindow(canonicalPath);
         opened = true;
       } catch (error) {
         const message = `Could not open the new worktree: ${toError(error).message}`;
@@ -355,7 +366,7 @@ export class WorktreeService implements vscode.Disposable {
   on<K extends keyof WorktreeEvents>(
     event: K,
     handler: (data: WorktreeEvents[K]) => void,
-  ): vscode.Disposable {
+  ): { dispose(): void } {
     return this.eventBus.on(event, handler);
   }
 
@@ -389,33 +400,34 @@ export class WorktreeService implements vscode.Disposable {
 
   async copyEnvironmentFiles(targetPath: string): Promise<Result<number>> {
     try {
-      const files = new Map<string, vscode.Uri>();
+      const files = new Map<string, string>();
       for (const pattern of this.config.envFilePatterns) {
-        const matches = await vscode.workspace.findFiles(
-          new vscode.RelativePattern(this.repositoryRoot, pattern),
+        const matches = await this.ports.fileFinder.findFiles(
+          this.repositoryRoot,
+          pattern,
           '**/{node_modules,.git}/**',
           1_000,
         );
-        for (const uri of matches) {
-          if (isPathInside(this.repositoryRoot, uri.fsPath)) {
-            files.set(uri.fsPath, uri);
+        for (const match of matches) {
+          if (isPathInside(this.repositoryRoot, match.fsPath)) {
+            files.set(match.fsPath, match.fsPath);
           }
         }
       }
 
       let copied = 0;
-      for (const source of files.values()) {
-        const relativePath = path.relative(this.repositoryRoot, source.fsPath);
+      for (const sourcePath of files.values()) {
+        const relativePath = path.relative(this.repositoryRoot, sourcePath);
         const destination = path.join(targetPath, relativePath);
         if (!isPathInside(targetPath, destination)) {
           continue;
         }
-        const stat = await fs.stat(source.fsPath);
+        const stat = await fs.stat(sourcePath);
         if (!stat.isFile()) {
           continue;
         }
         await fs.mkdir(path.dirname(destination), { recursive: true });
-        await fs.copyFile(source.fsPath, destination);
+        await fs.copyFile(sourcePath, destination);
         copied += 1;
       }
       return ok(copied);
@@ -450,12 +462,11 @@ export class WorktreeService implements vscode.Disposable {
       return;
     }
 
-    this.watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(this.repositoryRoot, '.git/**'),
+    this.watcher = this.ports.watcher.watch(
+      this.repositoryRoot,
+      '.git/**',
+      this.refreshDebounced,
     );
-    this.watcher.onDidChange(this.refreshDebounced);
-    this.watcher.onDidCreate(this.refreshDebounced);
-    this.watcher.onDidDelete(this.refreshDebounced);
 
     if (this.config.refreshInterval > 0) {
       this.refreshTimer = setInterval(
@@ -478,7 +489,7 @@ export class WorktreeService implements vscode.Disposable {
       return ok(undefined);
     }
 
-    if (!vscode.workspace.isTrusted) {
+    if (!this.ports.workspaceTrust.isTrusted) {
       return err(
         new Error(
           'Post-create commands were skipped because the workspace is not trusted',
@@ -487,16 +498,11 @@ export class WorktreeService implements vscode.Disposable {
     }
 
     if (this.config.confirmBeforePostCreateCommands) {
-      const runChoice = 'Run Commands';
-      const choice = await vscode.window.showWarningMessage(
-        `Run ${commands.length} post-create command(s) in "${path.basename(worktreePath)}"?`,
-        {
-          modal: true,
-          detail: commands.map((command) => `• ${command}`).join('\n'),
-        },
-        runChoice,
+      const confirmed = await this.ports.commandConfirmation.askBeforeRunning(
+        worktreePath,
+        commands,
       );
-      if (choice !== runChoice) {
+      if (!confirmed) {
         return err(new Error('Post-create commands skipped by user'));
       }
     }

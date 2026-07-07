@@ -13,6 +13,12 @@ import { SnapshotService } from './snapshots/service.js';
 import { GolyTreeProvider } from './ui/sidebar/provider.js';
 import { WorktreeService } from './worktrees/service.js';
 import type { WorktreeInfo } from './worktrees/service.js';
+import { VscodeSessionStore } from './adapters/vscode-session-store.js';
+import { VscodeEditorNavigator } from './adapters/vscode-editor-navigator.js';
+import { VscodeFileFinder } from './adapters/vscode-file-finder.js';
+import { VscodeWorkspaceWatcher } from './adapters/vscode-workspace-watcher.js';
+import { VscodeWorkspaceTrust } from './adapters/vscode-workspace-trust.js';
+import { VscodeCommandConfirmation } from './adapters/vscode-command-confirmation.js';
 
 let worktreeService: WorktreeService | undefined;
 let reviewService: ReviewService | undefined;
@@ -62,7 +68,13 @@ export async function activate(
     return;
   }
 
-  worktreeService = new WorktreeService(repositoryPath);
+  worktreeService = new WorktreeService(repositoryPath, {
+    watcher: new VscodeWorkspaceWatcher(),
+    fileFinder: new VscodeFileFinder(),
+    navigator: new VscodeEditorNavigator(),
+    workspaceTrust: new VscodeWorkspaceTrust(),
+    commandConfirmation: new VscodeCommandConfirmation(),
+  });
   const initialResult = await worktreeService.init();
   if (!initialResult.ok) {
     worktreeService.dispose();
@@ -72,8 +84,15 @@ export async function activate(
     return;
   }
 
-  reviewService = new ReviewService(git, worktreeService, context.globalState);
-  snapshotService = new SnapshotService(context.globalState);
+  reviewService = new ReviewService(
+    git,
+    worktreeService,
+    new VscodeSessionStore(context.globalState),
+    new VscodeEditorNavigator(),
+  );
+  snapshotService = new SnapshotService(
+    new VscodeSessionStore(context.globalState),
+  );
   treeProvider = new GolyTreeProvider(worktreeService);
 
   context.subscriptions.push(

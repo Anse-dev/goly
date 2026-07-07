@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type * as vscode from 'vscode';
 import { __resetMock, __getExecutedCommands } from './vscode.mock.js';
 import { ok } from '../core/types.js';
 import type { GitClient } from '../git/client.js';
 import { ReviewService } from '../review/service.js';
 import type { WorktreeInfo, WorktreeService } from '../worktrees/service.js';
+import type { SessionStore } from '../ports/session-store.js';
+import { VscodeEditorNavigator } from '../adapters/vscode-editor-navigator.js';
 
 beforeEach(() => {
   __resetMock();
@@ -42,7 +43,8 @@ describe('ReviewService', () => {
     const service = new ReviewService(
       git,
       worktreeService,
-      memento as vscode.Memento,
+      memento,
+      new VscodeEditorNavigator(),
     );
     const result = await service.startReview('origin/feature/payment');
 
@@ -83,7 +85,8 @@ describe('ReviewService', () => {
     const service = new ReviewService(
       git,
       worktreeService,
-      memento as vscode.Memento,
+      memento,
+      new VscodeEditorNavigator(),
     );
     const result = await service.endReview('review-1');
 
@@ -93,7 +96,7 @@ describe('ReviewService', () => {
   });
 });
 
-class MemoryMemento {
+class MemoryMemento implements SessionStore {
   private readonly values = new Map<string, unknown>();
 
   get<T>(key: string, defaultValue?: T): T | undefined {
