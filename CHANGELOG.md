@@ -1,8 +1,8 @@
 # Goly Release Notes
 
-## 1.0.0 — Parallel branches, under control
+## 1.1.0 — Parallel branches, under control
 
-Goly 1.0 introduces a dedicated Git worktree cockpit for VS Code. It is built for developers who keep features, fixes, reviews, and coding agents moving at the same time.
+Goly 1.1 introduces a dedicated Git worktree cockpit for VS Code. It is built for developers who keep features, fixes, reviews, and coding agents moving at the same time.
 
 ### Run branches side by side
 
@@ -47,3 +47,9 @@ Goly 1.0 introduces a dedicated Git worktree cockpit for VS Code. It is built fo
 - VS Code Extension Host integration testing
 - Lean Marketplace package with no production dependencies
 - Zero known npm vulnerabilities at release
+
+---
+
+## 1.0.0 — Initial release
+
+- First public version of the Goly worktree experiment
