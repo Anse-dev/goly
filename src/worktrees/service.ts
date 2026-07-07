@@ -11,6 +11,7 @@ import type { GolyConfig } from '../core/config.js';
 import {
   debounce,
   EventBus,
+  expandTilde,
   isPathInside,
   err,
   ok,
@@ -64,6 +65,11 @@ const EMPTY_STATUS = (branch: string): StatusInfo => ({
   untracked: [],
   ahead: 0,
   behind: 0,
+});
+
+const STATUS_UNAVAILABLE = (branch: string, error: string): StatusInfo => ({
+  ...EMPTY_STATUS(branch),
+  statusError: error,
 });
 
 export class WorktreeService implements vscode.Disposable {
@@ -125,7 +131,7 @@ export class WorktreeService implements vscode.Disposable {
           const statusResult = await worktreeGit.getStatus();
           const status = statusResult.ok
             ? statusResult.value
-            : EMPTY_STATUS(worktree.branch);
+            : STATUS_UNAVAILABLE(worktree.branch, statusResult.error.message);
           const old = previous.get(worktree.path);
           const statusChanged = old ? !statusesEqual(old.status, status) : true;
 
@@ -169,11 +175,22 @@ export class WorktreeService implements vscode.Disposable {
       );
     }
 
-    const worktreePath = path.resolve(this.repositoryRoot, requestedPath);
+    const expandedPath = expandTilde(requestedPath.trim());
+    const worktreePath = path.isAbsolute(expandedPath)
+      ? path.resolve(expandedPath)
+      : path.resolve(this.repositoryRoot, expandedPath);
     logger.info(`Creating worktree ${branch} at ${worktreePath}`);
 
+    const parentDir = path.dirname(worktreePath);
+    let createdParent = false;
     try {
-      await fs.mkdir(path.dirname(worktreePath), { recursive: true });
+      await fs.access(parentDir);
+    } catch {
+      createdParent = true;
+    }
+
+    try {
+      await fs.mkdir(parentDir, { recursive: true });
     } catch (error) {
       return err(
         new Error(
@@ -189,6 +206,9 @@ export class WorktreeService implements vscode.Disposable {
       options.startPoint,
     );
     if (!createResult.ok) {
+      if (createdParent) {
+        await fs.rmdir(parentDir).catch(() => undefined);
+      }
       return createResult;
     }
     const canonicalPath = await fs
@@ -363,8 +383,6 @@ export class WorktreeService implements vscode.Disposable {
     worktree.agentName = agentName;
     if (activityChanged) {
       worktree.lastActivity = Date.now();
-    }
-    if (activityChanged) {
       this.eventBus.emit('worktree:updated', worktree);
     }
   }
@@ -452,10 +470,15 @@ export class WorktreeService implements vscode.Disposable {
   private async runConfiguredPostCreateCommands(
     worktreePath: string,
   ): Promise<Result<void>> {
-    if (
-      !vscode.workspace.isTrusted &&
-      this.config.postCreateCommands.length > 0
-    ) {
+    const commands = this.config.postCreateCommands
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    if (commands.length === 0) {
+      return ok(undefined);
+    }
+
+    if (!vscode.workspace.isTrusted) {
       return err(
         new Error(
           'Post-create commands were skipped because the workspace is not trusted',
@@ -463,9 +486,22 @@ export class WorktreeService implements vscode.Disposable {
       );
     }
 
-    for (const command of this.config.postCreateCommands
-      .map((value) => value.trim())
-      .filter(Boolean)) {
+    if (this.config.confirmBeforePostCreateCommands) {
+      const runChoice = 'Run Commands';
+      const choice = await vscode.window.showWarningMessage(
+        `Run ${commands.length} post-create command(s) in "${path.basename(worktreePath)}"?`,
+        {
+          modal: true,
+          detail: commands.map((command) => `• ${command}`).join('\n'),
+        },
+        runChoice,
+      );
+      if (choice !== runChoice) {
+        return err(new Error('Post-create commands skipped by user'));
+      }
+    }
+
+    for (const command of commands) {
       try {
         logger.info(
           `Running post-create command in ${worktreePath}: ${command}`,
@@ -483,12 +519,7 @@ export class WorktreeService implements vscode.Disposable {
   }
 
   private generateId(worktreePath: string): string {
-    let hash = 0;
-    for (let index = 0; index < worktreePath.length; index += 1) {
-      hash = (hash << 5) - hash + worktreePath.charCodeAt(index);
-      hash |= 0;
-    }
-    return `wt_${Math.abs(hash).toString(36)}`;
+    return worktreePath;
   }
 }
 
@@ -524,6 +555,7 @@ function statusesEqual(left: StatusInfo, right: StatusInfo): boolean {
     left.isClean === right.isClean &&
     left.ahead === right.ahead &&
     left.behind === right.behind &&
+    left.statusError === right.statusError &&
     stringArraysEqual(left.modified, right.modified) &&
     stringArraysEqual(left.staged, right.staged) &&
     stringArraysEqual(left.untracked, right.untracked)

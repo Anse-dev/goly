@@ -13,6 +13,7 @@ export interface GolyConfig {
   confirmBeforeDeleteBranch: boolean;
   envFilePatterns: string[];
   postCreateCommands: string[];
+  confirmBeforePostCreateCommands: boolean;
   maxWorktrees: number;
 }
 
@@ -21,12 +22,13 @@ const CONFIG_KEY = 'goly';
 const DEFAULTS: GolyConfig = {
   baseDirectory: '~/workspaces',
   autoRefresh: true,
-  refreshInterval: 5000,
+  refreshInterval: 15000,
   autoOpenInNewWindow: true,
   confirmBeforeDelete: true,
   confirmBeforeDeleteBranch: true,
   envFilePatterns: ['.env', '.env.local', '.env.*', '*.env'],
-  postCreateCommands: ['npm install'],
+  postCreateCommands: [],
+  confirmBeforePostCreateCommands: true,
   maxWorktrees: 0,
 };
 
@@ -68,11 +70,12 @@ export function getConfig(): GolyConfig {
       postCreateCommands,
       DEFAULTS.postCreateCommands,
     ),
+    confirmBeforePostCreateCommands: config.get(
+      'confirmBeforePostCreateCommands',
+      DEFAULTS.confirmBeforePostCreateCommands,
+    ),
     maxWorktrees: nonNegativeNumber(
-      config.get(
-        'maxWorktrees',
-        config.get('maxWorktreesFree', DEFAULTS.maxWorktrees),
-      ),
+      config.get('maxWorktrees', DEFAULTS.maxWorktrees),
       DEFAULTS.maxWorktrees,
     ),
   };
@@ -106,5 +109,5 @@ function stringArray(value: unknown, fallback: string[]): string[] {
     .filter((item): item is string => typeof item === 'string')
     .map((item) => item.trim())
     .filter(Boolean);
-  return strings;
+  return strings.length > 0 ? strings : [...fallback];
 }

@@ -17,14 +17,14 @@ Goly turns Git worktrees into a focused mission-control view inside VS Code. Cre
 
 ## Your repository is parallel. Your tools should be too.
 
-Modern development rarely happens on one branch at a time. A feature is in progress, a production fix arrives, a PR needs review, and an AI coding agent is still working in another directory.
+Modern development rarely happens on one branch at a time. A feature is in progress, a production fix arrives, a PR needs review, and a coding agent is still working in another directory.
 
 Goly keeps those lanes visible:
 
 ```text
 ● main                 ↑2  ~3   :3000
-● feature/payments         ~8   :3001  ◈ Codex
-● review/pr-152                  :4173  ◈ Claude Code
+● feature/payments         ~8   :3001  ◈ Agent
+● review/pr-152                  :4173  ◈ Agent
 ```
 
 No hidden terminals. No mystery ports. No “which folder was that agent using?” moment.
@@ -36,7 +36,7 @@ No hidden terminals. No mystery ports. No “which folder was that agent using?�
 | **Worktree control** | Create, open, inspect, and safely remove Git worktrees from the Activity Bar. |
 | **Live branch status** | See ahead/behind counts plus staged, modified, and untracked files at a glance. |
 | **Port awareness** | Discover listening ports by worktree and surface collisions before they waste your time. |
-| **Agent presence** | Detect Claude Code, Codex, Cursor, Windsurf, and Copilot processes in each workspace. |
+| **Agent presence** | Detect common coding-agent processes in each workspace. |
 | **Review lanes** | Fetch a branch or PR ref into an isolated review worktree, then clean it up in one command. |
 | **Context snapshots** | Restore open files, editor columns, terminal locations, and scoped breakpoints. |
 
@@ -47,7 +47,7 @@ Create worktree
       ↓
 Copy local environment files
       ↓
-Run your configured setup command
+Optionally run confirmed setup commands
       ↓
 Open a clean VS Code window
       ↓
@@ -90,17 +90,18 @@ Goly ships with useful defaults and stays out of the way when you do not need au
 {
   "goly.baseDirectory": "~/workspaces",
   "goly.autoRefresh": true,
-  "goly.refreshInterval": 5000,
+  "goly.refreshInterval": 15000,
   "goly.autoOpenInNewWindow": true,
   "goly.confirmBeforeDelete": true,
   "goly.confirmBeforeDeleteBranch": true,
   "goly.envFilePatterns": [".env", ".env.local", ".env.*"],
-  "goly.postCreateCommands": ["npm install"],
+  "goly.postCreateCommands": [],
+  "goly.confirmBeforePostCreateCommands": true,
   "goly.maxWorktrees": 0
 }
 ```
 
-Set `goly.postCreateCommands` to an empty array to disable setup commands. Set `goly.maxWorktrees` to `0` for unlimited worktrees.
+Add commands to `goly.postCreateCommands` only when you want setup automation. Goly asks before running them by default. Set `goly.maxWorktrees` to `0` for unlimited worktrees.
 
 ## Built for local-first development
 
@@ -109,7 +110,7 @@ Set `goly.postCreateCommands` to an empty array to disable setup commands. Set `
 - **No telemetry**
 - **No source-code upload**
 
-Git operations and process inspection happen on your machine. Configured post-create commands only run in trusted VS Code workspaces.
+Git operations and process inspection happen on your machine. Configured post-create commands only run in trusted VS Code workspaces and require confirmation by default.
 
 ## Requirements
 

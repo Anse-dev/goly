@@ -43,6 +43,7 @@ export interface StatusInfo {
   untracked: string[];
   ahead: number;
   behind: number;
+  statusError?: string;
 }
 
 export interface RepositoryInfo {
@@ -126,18 +127,13 @@ export class GitClient {
   }
 
   async getStatus(): Promise<Result<StatusInfo>> {
-    const branch = await this.getCurrentBranch();
-    if (!branch.ok) {
-      return branch;
-    }
-
     const result = await this.run([
       'status',
       '--porcelain=v2',
       '--branch',
       '-z',
     ]);
-    return result.ok ? ok(parseStatus(result.value, branch.value)) : result;
+    return result.ok ? ok(parseStatus(result.value, 'detached')) : result;
   }
 
   async listBranches(includeRemotes = false): Promise<Result<BranchInfo[]>> {
@@ -162,7 +158,7 @@ export class GitClient {
   }
 
   async fetch(remote = 'origin', ref?: string): Promise<Result<void>> {
-    const args = ['fetch', '--', remote];
+    const args = ['fetch', '--end-of-options', remote];
     if (ref) {
       args.push(ref);
     }
@@ -249,6 +245,7 @@ export class GitClient {
       'diff',
       '--no-ext-diff',
       '--no-color',
+      '--end-of-options',
       `${baseRef}...${compareRef}`,
       '--',
     ]);

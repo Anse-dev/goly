@@ -9,7 +9,7 @@ Goly 1.1 introduces a dedicated Git worktree cockpit for VS Code. It is built fo
 - Create worktrees from new or existing branches
 - Open every worktree in its own VS Code window
 - Copy local environment files automatically
-- Run configurable setup commands after creation
+- Optionally run confirmed setup commands after creation
 - Remove worktrees and branches with explicit safety checks
 
 ### See what is happening
@@ -18,7 +18,7 @@ Goly 1.1 introduces a dedicated Git worktree cockpit for VS Code. It is built fo
 - Staged, modified, and untracked file counts
 - Listening ports and cross-worktree conflict warnings
 - Process visibility scoped to each worktree
-- Detection for Claude Code, Codex, Cursor, Windsurf, and Copilot
+- Detection for common coding-agent processes
 
 ### Review without disturbing your workspace
 
@@ -37,7 +37,7 @@ Goly 1.1 introduces a dedicated Git worktree cockpit for VS Code. It is built fo
 
 - No account, cloud sync, or telemetry
 - Shell-safe Git and process execution
-- Workspace Trust protection for configured commands
+- Workspace Trust protection and confirmation for configured commands
 - Cross-platform support for macOS, Linux, and Windows
 
 ### Built with release confidence

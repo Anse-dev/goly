@@ -6,6 +6,7 @@
   "publisher": "goly-dev",
   "icon": "media/logo.png",
   "repository": "https://github.com/Anse-dev/goly",
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -23,9 +24,6 @@
     "pull request",
     "code review",
     "ai coding agents",
-    "claude code",
-    "codex",
-    "cursor",
     "port monitor",
     "workspace manager",
     "developer tools"
@@ -36,8 +34,7 @@
     "onCommand:goly.create",
     "onCommand:goly.review",
     "onCommand:goly.endReview",
-    "onCommand:goly.snapshot",
-    "workspaceContains:.git"
+    "onCommand:goly.snapshot"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -202,7 +199,7 @@
         },
         "goly.refreshInterval": {
           "type": "number",
-          "default": 5000,
+          "default": 15000,
           "minimum": 0,
           "description": "Auto refresh interval in milliseconds (0 to disable)"
         },
@@ -239,10 +236,13 @@
           "items": {
             "type": "string"
           },
-          "default": [
-            "npm install"
-          ],
-          "description": "Commands to run after creating a worktree"
+          "default": [],
+          "description": "Optional commands to run after creating a worktree. Disabled by default."
+        },
+        "goly.confirmBeforePostCreateCommands": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask before running configured post-create commands in a new worktree"
         },
         "goly.maxWorktrees": {
           "type": "number",

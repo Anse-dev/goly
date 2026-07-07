@@ -5,10 +5,12 @@
 import * as vscode from 'vscode';
 
 const LOG_CHANNEL_NAME = 'Goly';
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+type LogLevel = (typeof LOG_LEVELS)[number];
 
 class GolyLogger {
   private channel: vscode.OutputChannel | null = null;
-  private level: 'debug' | 'info' | 'warn' | 'error' = 'debug';
+  private level: LogLevel = 'info';
 
   private getChannel(): vscode.OutputChannel {
     if (!this.channel) {
@@ -17,13 +19,12 @@ class GolyLogger {
     return this.channel;
   }
 
-  setLevel(level: 'debug' | 'info' | 'warn' | 'error'): void {
+  setLevel(level: LogLevel): void {
     this.level = level;
   }
 
-  private shouldLog(level: 'debug' | 'info' | 'warn' | 'error'): boolean {
-    const levels = ['debug', 'info', 'warn', 'error'];
-    return levels.indexOf(level) >= levels.indexOf(this.level);
+  private shouldLog(level: LogLevel): boolean {
+    return LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(this.level);
   }
 
   debug(message: string, ...args: unknown[]): void {
@@ -44,19 +45,19 @@ class GolyLogger {
     }
   }
 
-  error(message: string, error?: unknown): void {
+  error(message: string, ...args: unknown[]): void {
     if (this.shouldLog('error')) {
-      const details =
-        error === undefined
-          ? ''
-          : `\n${error instanceof Error ? (error.stack ?? error.message) : this.serialize(error)}`;
-      this.log('ERROR', `${message}${details}`, []);
+      const extras = args
+        .map((a) =>
+          a instanceof Error ? (a.stack ?? a.message) : this.serialize(a),
+        )
+        .join('\n');
+      this.log('ERROR', extras ? `${message}\n${extras}` : message, []);
     }
   }
 
   private log(level: string, message: string, args: unknown[]): void {
-    const timestamp =
-      new Date().toISOString().split('T')[1]?.split('.')[0] || '';
+    const timestamp = new Date().toISOString().slice(11, 19);
     const formatted = `[${timestamp}] [${level}] ${message}`;
 
     if (args.length > 0) {

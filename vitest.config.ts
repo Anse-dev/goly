@@ -14,7 +14,14 @@ export default defineConfig({
     exclude: ['src/test/integration/**'],
     coverage: {
       reporter: ['text', 'html'],
-      include: ['src/git/parsers.ts', 'src/ports/inspector.ts'],
+      include: [
+        'src/core/**/*.ts',
+        'src/git/**/*.ts',
+        'src/ports/**/*.ts',
+        'src/review/**/*.ts',
+        'src/snapshots/**/*.ts',
+        'src/worktrees/**/*.ts',
+      ],
     },
   },
 });

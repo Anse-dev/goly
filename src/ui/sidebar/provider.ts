@@ -139,6 +139,15 @@ export class GolyTreeProvider
         'worktreeInfo',
       ),
     ];
+    if (worktree.status.statusError) {
+      items.push(
+        new TreeItem(
+          `$(warning) Git status unavailable`,
+          vscode.TreeItemCollapsibleState.None,
+          'worktreeInfo',
+        ),
+      );
+    }
     const statusParts: string[] = [];
     if (worktree.status.ahead > 0) {
       statusParts.push(`↑${worktree.status.ahead}`);
@@ -236,6 +245,9 @@ export class GolyTreeProvider
     if (worktree.hasAgent) {
       parts.push('$(hubot)');
     }
+    if (worktree.status.statusError) {
+      parts.push('$(warning)');
+    }
     return parts.join(' ');
   }
 
@@ -245,6 +257,9 @@ export class GolyTreeProvider
       `Branch: ${worktree.branch}`,
       `Path: ${worktree.path}`,
     ];
+    if (worktree.status.statusError) {
+      lines.push(`Git status unavailable: ${worktree.status.statusError}`);
+    }
     if (!worktree.status.isClean) {
       lines.push(
         `${worktree.status.modified.length} modified`,
@@ -264,6 +279,12 @@ export class GolyTreeProvider
   private getStatusIcon(worktree: WorktreeInfo): vscode.ThemeIcon {
     if (worktree.isMain) {
       return new vscode.ThemeIcon('home');
+    }
+    if (worktree.status.statusError) {
+      return new vscode.ThemeIcon(
+        'warning',
+        new vscode.ThemeColor('problemsWarningIcon.foreground'),
+      );
     }
     if (!worktree.status.isClean) {
       return new vscode.ThemeIcon(
