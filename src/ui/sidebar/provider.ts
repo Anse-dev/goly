@@ -207,10 +207,10 @@ export class GolyTreeProvider
       parts.push(`:${worktree.ports[0]}`);
     }
     if (worktree.hasAgent) {
-      parts.push('$(hubot)');
+      parts.push('◈');
     }
     if (worktree.status.statusError) {
-      parts.push('$(warning)');
+      parts.push('⚠');
     }
     return parts.join(' ');
   }

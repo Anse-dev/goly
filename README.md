@@ -22,9 +22,9 @@ Modern development rarely happens on one branch at a time. A feature is in progr
 Goly keeps those lanes visible:
 
 ```
-● main               ↑2 ~3  :3000
-● feature/payments      ~8  :3001  ◈ Agent
-● review/pr-152             :4173  ◈ Agent
+● main               ↑2  ~3  :3000
+● feature/payments       ~8  :3001  ◈ Agent
+● review/pr-152              :4173  ◈ Agent
 ```
 
 No hidden terminals. No mystery ports. No “which folder was that agent using?” moment.
