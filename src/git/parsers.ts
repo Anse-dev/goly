@@ -1,3 +1,4 @@
+import * as path from 'path';
 import type { BranchInfo, StatusInfo, Worktree } from './client.js';
 
 export function parseWorktreeList(output: string): Worktree[] {
@@ -16,7 +17,7 @@ export function parseWorktreeList(output: string): Worktree[] {
 
     for (const line of entry.split('\n')) {
       if (line.startsWith('worktree ')) {
-        worktreePath = line.slice('worktree '.length);
+        worktreePath = path.normalize(line.slice('worktree '.length));
       } else if (line.startsWith('HEAD ')) {
         head = line.slice('HEAD '.length);
       } else if (line.startsWith('branch ')) {
